@@ -151,6 +151,21 @@ public class MainForm : Form
         if (_backend != null && _config.TransparentBackend.Enabled && _config.TransparentBackend.Type == "proxifyre")
         {
             var prox = new ToolStripMenuItem("ProxiFyre");
+            prox.DropDownItems.Add("Restart Service (UAC)", null, (_, _) =>
+            {
+                if (MessageBox.Show(
+                        $"Restart ProxiFyre service?\n\nWindows will show a UAC prompt. " +
+                        $"After you confirm, the service stops and restarts so any pending config changes take effect.",
+                        "Restart ProxiFyre", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                {
+                    var ok = _backend.RestartServiceElevated();
+                    if (ok)
+                        MessageBox.Show("ProxiFyre service restarted.", "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    else
+                        MessageBox.Show("Restart failed or was cancelled. Check the Events feed in Dashboard.", "Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            });
+            prox.DropDownItems.Add(new ToolStripSeparator());
             prox.DropDownItems.Add("Open Config", null, (_, _) => _backend.OpenConfigFile());
             prox.DropDownItems.Add("Open Logs", null, (_, _) => _backend.OpenLogsFolder());
             prox.DropDownItems.Add("Open Folder", null, (_, _) => _backend.OpenBackendFolder());

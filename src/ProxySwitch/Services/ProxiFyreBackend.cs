@@ -243,9 +243,9 @@ public class ProxiFyreBackend
 
     /// <summary>
     /// Regenerate config + optionally restart the backend.
-    /// If user asks for restart but ManageService is off, the call still succeeds
-    /// (config written) but returns NeedsManualRestart=true so the UI can show
-    /// "needs-restart" rather than falsely claiming "active".
+    /// Restart path: try in-process ServiceController first (works when ProxySwitch
+    /// is already admin); fall back to UAC-elevated helper. Falls through to
+    /// NeedsManualRestart only if both paths fail or user declines UAC.
     /// </summary>
     public ApplyResult Apply(bool restartService)
     {
@@ -263,25 +263,29 @@ public class ProxiFyreBackend
                 return new ApplyResult { Success = true, ConfigPath = path };
             }
 
-            if (!be.ManageService)
+            // Try direct restart first if user opted into ManageService (no UAC popup).
+            if (be.ManageService && RestartService())
             {
-                _events.Add("ManualRestartRequired",
-                    $"config written; restart {be.ServiceName} manually to apply changes");
-                return new ApplyResult
-                {
-                    Success = true,
-                    ConfigPath = path,
-                    NeedsManualRestart = true
-                };
-            }
-
-            if (RestartService())
-            {
-                _events.Add("ProxiFyreApplied", "config written + service restarted");
+                _events.Add("ProxiFyreApplied", "config written + service restarted (in-process)");
                 return new ApplyResult { Success = true, ConfigPath = path, ServiceRestarted = true };
             }
-            _events.Add("ProxiFyreApplied", "config written, service restart FAILED");
-            return new ApplyResult { Success = false, ConfigPath = path, Reason = "service restart failed" };
+
+            // Fall back to UAC-elevated helper. Shows ONE prompt to the user.
+            if (RestartServiceElevated())
+            {
+                _events.Add("ProxiFyreApplied", "config written + service restarted (UAC)");
+                return new ApplyResult { Success = true, ConfigPath = path, ServiceRestarted = true };
+            }
+
+            // Either user clicked No on UAC, or the helper failed.
+            _events.Add("ManualRestartRequired",
+                $"config written; restart {be.ServiceName} manually to apply changes");
+            return new ApplyResult
+            {
+                Success = true,
+                ConfigPath = path,
+                NeedsManualRestart = true
+            };
         }
         catch (Exception ex)
         {
@@ -339,7 +343,7 @@ public class ProxiFyreBackend
 
     /// <summary>
     /// Restart the ProxiFyre Windows Service using ServiceController.
-    /// Requires admin privileges; will return false on access denied.
+    /// Requires the calling process to already be elevated; returns false otherwise.
     /// </summary>
     public bool RestartService()
     {
@@ -357,12 +361,71 @@ public class ProxiFyreBackend
             }
             sc.Start();
             sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
-            Logger.Info($"Service {be.ServiceName} restarted");
+            Logger.Info($"Service {be.ServiceName} restarted via ServiceController");
             return true;
         }
         catch (Exception ex)
         {
-            Logger.Error($"Service restart failed: {ex.Message}");
+            Logger.Error($"Service restart (in-process) failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Restart the ProxiFyre service by spawning an elevated helper process
+    /// (cmd.exe + sc.exe) with `runas` verb. The OS shows a single UAC prompt;
+    /// after the user accepts, the restart happens silently. Returns false if
+    /// the user declined UAC or sc.exe failed.
+    /// </summary>
+    public bool RestartServiceElevated()
+    {
+        var name = _config.TransparentBackend.ServiceName;
+        if (string.IsNullOrEmpty(name)) return false;
+
+        try
+        {
+            // sc stop, wait, sc start. Hide window via cmd /c so user doesn't see
+            // a black flash beyond the UAC prompt itself.
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c sc.exe stop \"{name}\" >nul 2>&1 & timeout /t 1 /nobreak >nul & sc.exe start \"{name}\" >nul 2>&1",
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+                CreateNoWindow = true
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return false;
+            if (!p.WaitForExit(20000))
+            {
+                try { p.Kill(); } catch { }
+                _events.Add("ServiceRestartTimeout", $"{name}: elevated restart did not finish in 20s");
+                return false;
+            }
+
+            // Verify the service is actually running now.
+            using var sc = new ServiceController(name);
+            sc.Refresh();
+            if (sc.Status == ServiceControllerStatus.Running)
+            {
+                Logger.Info($"Service {name} restarted via UAC-elevated helper");
+                _events.Add("ServiceRestarted", $"{name}: restarted (elevated)");
+                return true;
+            }
+            _events.Add("ServiceRestartFailed", $"{name}: still not running after elevated restart");
+            return false;
+        }
+        catch (System.ComponentModel.Win32Exception ex) when ((uint)ex.NativeErrorCode == 0x800704C7)
+        {
+            // ERROR_CANCELLED — user clicked No on UAC prompt
+            _events.Add("ServiceRestartDeclined", $"{name}: user declined UAC");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"RestartServiceElevated failed: {ex.Message}");
+            _events.Add("ServiceRestartFailed", $"{name}: {ex.Message}");
             return false;
         }
     }

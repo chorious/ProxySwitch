@@ -80,6 +80,7 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.5 | ✅ | Routing Decoupled — 删 Proxifier 假装集成，改名 Clash Verge / v2ray，Copy Rule Hint |
 | v0.6 | ✅ | ProxiFyre transparent per-app backend（generic app 真路由） |
 | v0.6.1 | ✅ | 配置 trap 修复 / pre-flight 检测 / Open Config 入口 / timestamp backup |
+| v0.6.2 | ✅ | 拖 app 时 ProxySwitch 自动弹 UAC 重启 ProxiFyre（不再手动 PowerShell） |
 | v0.7 | 📋 | 自动发现应用路径、应用规则预设 |
 | v1.0 | 📋 | 安装包、开机自启 |
 

@@ -171,9 +171,11 @@ public class TransparentBackendConfig
     [JsonPropertyName("manageService")]
     public bool ManageService { get; set; }
 
-    /// <summary>If true, restart backend after every config write.</summary>
+    /// <summary>If true, restart backend after every config write.
+    /// Restart uses ServiceController when ManageService is on, otherwise spawns
+    /// an elevated helper (single UAC prompt).</summary>
     [JsonPropertyName("autoRestartOnConfigChange")]
-    public bool AutoRestartOnConfigChange { get; set; }
+    public bool AutoRestartOnConfigChange { get; set; } = true;
 }
 
 public class AppRoute
