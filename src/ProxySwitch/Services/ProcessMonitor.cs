@@ -240,6 +240,13 @@ public class ProcessMonitor : IDisposable
         return await Task.Run(() => GetFullProcessSnapshots(), ct);
     }
 
+    /// <summary>
+    /// Synchronous variant — safe to call from the UI thread without deadlock.
+    /// WMI query blocks for ~200-500ms inline. Used by LaunchGeneric where
+    /// the baseline MUST be captured before Process.Start.
+    /// </summary>
+    public List<ProcessSnapshot> CaptureProcessSnapshots() => GetFullProcessSnapshots();
+
     private static List<ProcessSnapshot> GetFullProcessSnapshots()
     {
         var result = new List<ProcessSnapshot>();

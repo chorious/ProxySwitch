@@ -143,10 +143,11 @@ public sealed class SessionManager : IDisposable
         _events.Add("LaunchStarted", $"Starting {name} in {mode} mode");
 
         // Capture process baseline BEFORE launching, for correlated handoff fallback.
-        // SYNC wait: must complete before Process.Start so launcher (and any immediate
-        // child) are NOT in baseline. WMI call is ~200-500ms on typical machines —
-        // acceptable inline given the user just clicked a drop-confirm dialog.
-        var baseline = _processMonitor.CaptureProcessSnapshotsAsync().GetAwaiter().GetResult();
+        // Use the SYNC variant: calling .GetAwaiter().GetResult() on the async one
+        // from the UI thread deadlocks (await continuation needs UI SyncContext,
+        // UI thread is blocked on GetResult). GetFullProcessSnapshots is already
+        // synchronous internally — no real benefit from the async wrapper here.
+        var baseline = _processMonitor.CaptureProcessSnapshots();
         var baselineTask = Task.FromResult(baseline);
 
         var result = _launcher.LaunchGeneric(exePath);
