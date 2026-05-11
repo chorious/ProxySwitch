@@ -7,37 +7,48 @@ public sealed class LaunchZoneControl : Panel
     public string Title { get; set; } = "";
     public string Subtitle { get; set; } = "Drop app here";
     public string Mode { get; set; } = "direct";
-    public Color AccentColor { get; set; } = Color.Gray;
-    private Color _normalBackColor;
-    private Color _hoverBackColor;
+
+    private Color _accentColor = Color.Gray;
+    public Color AccentColor
+    {
+        get => _accentColor;
+        set
+        {
+            _accentColor = value;
+            _normalFill = Color.FromArgb(40, value);
+            _hoverFill = Color.FromArgb(90, value);
+            Invalidate();
+        }
+    }
+
+    private Color _normalFill = Color.FromArgb(40, Color.Gray);
+    private Color _hoverFill = Color.FromArgb(90, Color.Gray);
+    private bool _isHover;
+    private readonly Font _titleFont;
 
     public event Action<string>? FileDropped;
 
     public LaunchZoneControl()
     {
         AllowDrop = true;
-        DoubleBuffered = true;
         BorderStyle = BorderStyle.FixedSingle;
+        SetStyle(ControlStyles.OptimizedDoubleBuffer
+               | ControlStyles.AllPaintingInWmPaint
+               | ControlStyles.UserPaint
+               | ControlStyles.ResizeRedraw, true);
+        _titleFont = new Font(Font.FontFamily, 11f, FontStyle.Bold);
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        var fillColor = _isHover ? _hoverFill : _normalFill;
+        using (var brush = new SolidBrush(fillColor))
+            e.Graphics.FillRectangle(brush, ClientRectangle);
 
-        _normalBackColor = Color.FromArgb(30, AccentColor);
-        _hoverBackColor = Color.FromArgb(60, AccentColor);
-
-        if (BackColor == Color.Empty)
-            BackColor = _normalBackColor;
-
-        using var brush = new SolidBrush(BackColor);
-        e.Graphics.FillRectangle(brush, ClientRectangle);
-
-        var font = new Font(Font.FontFamily, 11f, FontStyle.Bold);
         TextRenderer.DrawText(
-            e.Graphics, $"{Title}\n{Subtitle}", font, ClientRectangle,
+            e.Graphics, $"{Title}\n{Subtitle}", _titleFont, ClientRectangle,
             AccentColor,
-            BackColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 
@@ -47,7 +58,7 @@ public sealed class LaunchZoneControl : Panel
         if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
         {
             e.Effect = DragDropEffects.Copy;
-            BackColor = _hoverBackColor;
+            _isHover = true;
             Invalidate();
         }
     }
@@ -55,14 +66,14 @@ public sealed class LaunchZoneControl : Panel
     protected override void OnDragLeave(EventArgs e)
     {
         base.OnDragLeave(e);
-        BackColor = _normalBackColor;
+        _isHover = false;
         Invalidate();
     }
 
     protected override void OnDragDrop(DragEventArgs e)
     {
         base.OnDragDrop(e);
-        BackColor = _normalBackColor;
+        _isHover = false;
         Invalidate();
 
         var files = e.Data?.GetData(DataFormats.FileDrop) as string[];
@@ -111,5 +122,14 @@ public sealed class LaunchZoneControl : Panel
         {
             return null;
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _titleFont.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

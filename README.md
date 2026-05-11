@@ -71,8 +71,11 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.1 | ✅ | 托盘、端口检测、启动浏览器、加载 Proxifier profile |
 | v0.2 | ✅ | 动态托盘图标、GUI 配置页、最近使用记录 |
 | v0.3 | ✅ | Dashboard、Drop Zone、Session Tracking、30s 心跳 |
-| v0.4 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
-| v0.5 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
+| v0.3.1 | ✅ | 修复 Drop Zone bug + `.lnk` 支持 + ProcessMonitor 后台化 |
+| v0.3.2 | ✅ | Session 卡片刷新、Drop zone 重绘、WorkingDirectory 修复 |
+| v0.4 | ✅ | 子进程跟踪、launcher handoff 检测、Proxifier Assist 提示 |
+| v0.5 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
+| v0.6 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
 | v1.0 | 📋 | 安装包、开机自启 |
 
 ## License

@@ -30,7 +30,8 @@ public class AppLauncher
             {
                 FileName = app.Exe,
                 Arguments = args,
-                UseShellExecute = true
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(app.Exe) ?? string.Empty
             });
             Logger.Info($"Launched {app.Name}: {app.Exe} {args}");
             return new LaunchResult
@@ -61,7 +62,8 @@ public class AppLauncher
             var proc = Process.Start(new ProcessStartInfo
             {
                 FileName = exePath,
-                UseShellExecute = true
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(exePath) ?? string.Empty
             });
             Logger.Info($"Launched generic app: {exePath}");
             return new LaunchResult

@@ -190,6 +190,8 @@ public class DashboardForm : Form
                 var result = MessageBox.Show(
                     $"No matching Proxifier profile found for {mode}.\n" +
                     $"ProxySwitch will start the app but traffic routing depends on current Proxifier rules.\n\n" +
+                    $"⚠ Launcher apps (Steam / Epic / game clients) start child processes that ProxySwitch cannot track yet, " +
+                    $"and Proxifier rules do not auto-apply to children. Confirm your Proxifier profile covers the target.\n\n" +
                     $"Run {name} anyway?",
                     "Confirm Launch",
                     MessageBoxButtons.YesNo,
@@ -234,8 +236,22 @@ public class DashboardForm : Form
     private void RefreshSessions()
     {
         var sessions = _sessions.GetSessions();
-        // Only rebuild if count changed to avoid flicker
-        if (_sessionPanel.Controls.Count == sessions.Count)
+
+        bool structureMatches = _sessionPanel.Controls.Count == sessions.Count;
+        if (structureMatches)
+        {
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                var expectedTag = GetSessionTag(sessions[i]);
+                if ((_sessionPanel.Controls[i].Tag as string) != expectedTag)
+                {
+                    structureMatches = false;
+                    break;
+                }
+            }
+        }
+
+        if (structureMatches)
         {
             for (int i = 0; i < sessions.Count; i++)
                 UpdateSessionCard(_sessionPanel.Controls[i], sessions[i]);
@@ -245,20 +261,39 @@ public class DashboardForm : Form
         _sessionPanel.Controls.Clear();
         foreach (var session in sessions)
         {
-            _sessionPanel.Controls.Add(CreateSessionCard(session));
+            var card = CreateSessionCard(session);
+            card.Tag = GetSessionTag(session);
+            _sessionPanel.Controls.Add(card);
         }
+    }
+
+    private static string GetSessionTag(LaunchSession session)
+    {
+        // Tag includes status + warning presence + assist state so card rebuilds when any change
+        var hasWarning = !string.IsNullOrEmpty(session.RoutingWarning) && !session.IsRoutingAssisted;
+        return $"{session.Status}|{hasWarning}|{session.IsRoutingAssisted}";
     }
 
     private Panel CreateSessionCard(LaunchSession session)
     {
+        var hasWarning = !string.IsNullOrEmpty(session.RoutingWarning) && !session.IsRoutingAssisted;
         var card = new Panel
         {
             Width = _sessionPanel.Width - 30,
-            Height = 60,
+            Height = hasWarning ? 100 : 60,
             Margin = new Padding(4),
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = GetSessionColor(session.Status)
         };
+
+        var rootLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = hasWarning ? 2 : 1
+        };
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
+        if (hasWarning) rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
         var layout = new TableLayoutPanel
         {
@@ -284,24 +319,25 @@ public class DashboardForm : Form
         // Status + Duration
         var statusLbl = new Label
         {
-            Text = $"{session.Status}\n{session.DurationText}",
+            Text = $"{FormatStatus(session)}\n{session.DurationText}",
             Dock = DockStyle.Fill
         };
         layout.Controls.Add(statusLbl, 1, 0);
 
         // PID / Process count
+        var liveCount = session.Processes.Count(p => p.ExitedAt == null);
         var pidLbl = new Label
         {
-            Text = session.ProcessIds.Count > 0
-                ? $"Processes: {session.ProcessIds.Count}"
-                : $"PID: {session.MainProcessId}",
+            Text = liveCount > 1
+                ? $"Processes: {liveCount}\n{session.RoutingStatus}"
+                : $"PID: {session.LiveProcessId?.ToString() ?? session.RootProcessId?.ToString() ?? "?"}\n{session.RoutingStatus}",
             Dock = DockStyle.Fill
         };
         layout.Controls.Add(pidLbl, 2, 0);
 
         // Actions
         var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
-        if (session.Status == "running")
+        if (session.Status == "running" || session.Status == "running-via-child")
         {
             var stopBtn = new Button { Text = "Stop", AutoSize = true, Height = 24 };
             stopBtn.Click += (_, _) =>
@@ -319,8 +355,82 @@ public class DashboardForm : Form
         }
         layout.Controls.Add(btnPanel, 3, 0);
 
-        card.Controls.Add(layout);
+        rootLayout.Controls.Add(layout, 0, 0);
+
+        // Assist warning row
+        if (hasWarning)
+        {
+            var warnPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Color.FromArgb(254, 243, 199),
+                Padding = new Padding(4)
+            };
+            warnPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70f));
+            warnPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30f));
+
+            var warnLbl = new Label
+            {
+                Text = "⚠ " + session.RoutingWarning,
+                Dock = DockStyle.Fill,
+                ForeColor = Color.FromArgb(146, 64, 14),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            warnPanel.Controls.Add(warnLbl, 0, 0);
+
+            var addRuleBtn = new Button { Text = "Add Rule", AutoSize = true, Height = 24, Anchor = AnchorStyles.Right };
+            addRuleBtn.Click += (_, _) => HandleAddRule(session);
+            warnPanel.Controls.Add(addRuleBtn, 1, 0);
+
+            rootLayout.Controls.Add(warnPanel, 0, 1);
+        }
+
+        card.Controls.Add(rootLayout);
         return card;
+    }
+
+    private static string FormatStatus(LaunchSession session) => session.Status switch
+    {
+        "running" => "Running",
+        "running-via-child" => "Via child",
+        "exited" => "Exited",
+        "failed" => "Failed",
+        _ => session.Status
+    };
+
+    private void HandleAddRule(LaunchSession session)
+    {
+        var liveChild = session.Processes.FirstOrDefault(p => p.ExitedAt == null && p.Role == "descendant");
+        if (liveChild == null) return;
+
+        var profileKey = session.ProxyId switch
+        {
+            "p10708" => "all10708",
+            "p10808" => "all10808",
+            _ => null
+        };
+        if (profileKey == null)
+        {
+            MessageBox.Show("No matching Proxifier profile mapped for this proxy.", "Cannot Assist",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var result = MessageBox.Show(
+            $"Add {liveChild.Name} to the {session.ProxyId} Proxifier rule?\n\n" +
+            $"This routes future connections from {liveChild.Name} through the configured proxy.\n" +
+            $"Note: The rule is executable-based, not limited to this PID. " +
+            $"Other instances of {liveChild.Name} elsewhere may also be routed.",
+            "Add Assist Rule",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+
+        if (result == DialogResult.Yes)
+        {
+            _sessions.AssistRouting(session, profileKey);
+        }
     }
 
     private void UpdateSessionCard(Control control, LaunchSession session)
@@ -328,27 +438,35 @@ public class DashboardForm : Form
         if (control is not Panel card) return;
         card.BackColor = GetSessionColor(session.Status);
 
-        var layout = card.Controls[0] as TableLayoutPanel;
+        // card.Controls[0] is rootLayout (TableLayoutPanel), [0,0] is the main layout
+        var rootLayout = card.Controls[0] as TableLayoutPanel;
+        if (rootLayout == null) return;
+
+        var layout = rootLayout.GetControlFromPosition(0, 0) as TableLayoutPanel;
         if (layout == null) return;
 
         var nameLbl = layout.GetControlFromPosition(0, 0) as Label;
         if (nameLbl != null) nameLbl.Text = $"{session.Name}\n{session.Mode}";
 
         var statusLbl = layout.GetControlFromPosition(1, 0) as Label;
-        if (statusLbl != null) statusLbl.Text = $"{session.Status}\n{session.DurationText}";
+        if (statusLbl != null) statusLbl.Text = $"{FormatStatus(session)}\n{session.DurationText}";
 
         var pidLbl = layout.GetControlFromPosition(2, 0) as Label;
         if (pidLbl != null)
-            pidLbl.Text = session.ProcessIds.Count > 0
-                ? $"Processes: {session.ProcessIds.Count}"
-                : $"PID: {session.MainProcessId}";
+        {
+            var liveCount = session.Processes.Count(p => p.ExitedAt == null);
+            pidLbl.Text = liveCount > 1
+                ? $"Processes: {liveCount}\n{session.RoutingStatus}"
+                : $"PID: {session.LiveProcessId?.ToString() ?? session.RootProcessId?.ToString() ?? "?"}\n{session.RoutingStatus}";
+        }
     }
 
     private static Color GetSessionColor(string status) => status switch
     {
-        "running" => Color.FromArgb(220, 252, 231), // light green
-        "exited" => Color.FromArgb(243, 244, 246),  // light gray
-        "failed" => Color.FromArgb(254, 226, 226),  // light red
+        "running" => Color.FromArgb(220, 252, 231),         // light green
+        "running-via-child" => Color.FromArgb(254, 249, 195), // light yellow
+        "exited" => Color.FromArgb(243, 244, 246),          // light gray
+        "failed" => Color.FromArgb(254, 226, 226),          // light red
         _ => Color.White
     };
 

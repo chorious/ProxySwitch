@@ -10,10 +10,29 @@ public sealed class LaunchSession
     public string? UserDataDir { get; init; }
     public DateTime StartedAt { get; init; } = DateTime.Now;
     public DateTime? ExitedAt { get; set; }
-    public int? MainProcessId { get; set; }
-    public List<int> ProcessIds { get; } = [];
-    public string Status { get; set; } = "starting"; // starting, running, exited, failed
+    public int? RootProcessId { get; set; }
+    public List<TrackedProcess> Processes { get; } = [];
+    public string Status { get; set; } = "starting"; // starting, running, running-via-child, exited, failed
+    public string RoutingStatus { get; set; } = "unknown"; // unknown, direct, browser-arg, profile-loaded, assisted, unverified
+    public bool IsLauncherHandoffDetected { get; set; }
+    public bool IsRoutingAssisted { get; set; }
+    public string? RoutingWarning { get; set; }
     public string? LastError { get; set; }
+
+    public int? LiveProcessId
+    {
+        get
+        {
+            // Return the most recently added live process, or root if still alive
+            var live = Processes.Where(p => p.ExitedAt == null).ToList();
+            if (live.Count == 0) return null;
+            // Prefer descendants over root (launcher handoff)
+            var descendant = live.LastOrDefault(p => p.Role == "descendant");
+            return descendant?.ProcessId ?? live.LastOrDefault()?.ProcessId;
+        }
+    }
+
+    public bool HasLiveProcesses => Processes.Any(p => p.ExitedAt == null);
 
     public TimeSpan? Duration => ExitedAt.HasValue
         ? ExitedAt.Value - StartedAt
