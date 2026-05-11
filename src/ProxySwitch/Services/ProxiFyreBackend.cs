@@ -207,9 +207,10 @@ public class ProxiFyreBackend
 
     /// <summary>
     /// Add or update an AppRoute for the given exe + proxy. Returns true if
-    /// the route list actually changed.
+    /// the route list actually changed. <paramref name="isPersistent"/> controls
+    /// whether the route is also saved to proxyswitch.json for the next startup.
     /// </summary>
-    public bool EnsureRoute(string exePath, string proxyId, string source = "drop-zone")
+    public bool EnsureRoute(string exePath, string proxyId, string source = "drop-zone", bool isPersistent = true)
     {
         if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(proxyId)) return false;
 
@@ -218,27 +219,93 @@ public class ProxiFyreBackend
             string.Equals(r.ExePath, exePath, StringComparison.OrdinalIgnoreCase) &&
             r.ProxyId == proxyId);
 
+        bool changed = false;
         if (existing != null)
         {
-            if (existing.Enabled) return false;
-            existing.Enabled = true;
-            _events.Add("AppRouteUpdated", $"{procName} -> {proxyId} re-enabled");
-            return true;
+            if (!existing.Enabled) { existing.Enabled = true; changed = true; }
+            // Upgrading tmp → set is OK; downgrading set → tmp by re-dropping isn't.
+            if (isPersistent && !existing.IsPersistent)
+            {
+                existing.IsPersistent = true;
+                changed = true;
+            }
+            if (changed) _events.Add("AppRouteUpdated", $"{procName} -> {proxyId} updated");
+        }
+        else
+        {
+            var route = new AppRoute
+            {
+                Id = $"{Path.GetFileNameWithoutExtension(exePath)}-{proxyId}-{Guid.NewGuid().ToString("N")[..6]}",
+                Name = $"{procName} via {proxyId}",
+                ExePath = exePath,
+                ProcessName = procName,
+                ProxyId = proxyId,
+                Enabled = true,
+                IsPersistent = isPersistent,
+                Source = source
+            };
+            _config.AppRoutes.Add(route);
+            _events.Add("AppRouteAdded", $"{procName} -> {proxyId} ({(isPersistent ? "persistent" : "session-only")}, source: {source})");
+            changed = true;
         }
 
-        var route = new AppRoute
+        if (changed && _config.AppRoutes.Any(r => r.IsPersistent))
         {
-            Id = $"{Path.GetFileNameWithoutExtension(exePath)}-{proxyId}-{Guid.NewGuid().ToString("N")[..6]}",
-            Name = $"{procName} via {proxyId}",
-            ExePath = exePath,
-            ProcessName = procName,
-            ProxyId = proxyId,
-            Enabled = true,
-            Source = source
-        };
-        _config.AppRoutes.Add(route);
-        _events.Add("AppRouteAdded", $"{procName} -> {proxyId} (source: {source})");
+            // Save persistent routes back to proxyswitch.json for next startup.
+            // Failure here is non-fatal — ProxiFyre config is the real source for now.
+            try { SaveSwitchConfig(); }
+            catch (Exception ex) { Logger.Error($"SaveSwitchConfig after EnsureRoute failed: {ex.Message}"); }
+        }
+        return changed;
+    }
+
+    /// <summary>
+    /// Remove an AppRoute by id. Used by tmp-cleanup or user-driven delete.
+    /// Returns true if a route was actually removed.
+    /// </summary>
+    public bool RemoveRoute(string routeId)
+    {
+        var idx = _config.AppRoutes.FindIndex(r => r.Id == routeId);
+        if (idx < 0) return false;
+        var r = _config.AppRoutes[idx];
+        _config.AppRoutes.RemoveAt(idx);
+        _events.Add("AppRouteRemoved", $"{r.Name}");
+        if (r.IsPersistent)
+        {
+            try { SaveSwitchConfig(); }
+            catch (Exception ex) { Logger.Error($"SaveSwitchConfig after RemoveRoute failed: {ex.Message}"); }
+        }
         return true;
+    }
+
+    /// <summary>
+    /// Persist ONLY isPersistent==true routes back to proxyswitch.json. Atomic write.
+    /// </summary>
+    public void SaveSwitchConfig()
+    {
+        var path = Path.Combine(MainForm.RootPath, "config", "proxyswitch.json");
+        // Snapshot _config but with only persistent routes serialized.
+        var persistent = _config.AppRoutes.Where(r => r.IsPersistent).ToList();
+        var snapshot = new ProxyConfig
+        {
+            Proxies = _config.Proxies,
+            Apps = _config.Apps,
+            RoutingBackends = _config.RoutingBackends,
+            RoutingHints = _config.RoutingHints,
+            RuleHintPresets = _config.RuleHintPresets,
+            TransparentBackend = _config.TransparentBackend,
+            AppRoutes = persistent
+        };
+        var opts = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        };
+        var json = JsonSerializer.Serialize(snapshot, opts);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, json);
+        File.Move(tmp, path, overwrite: true);
+        Logger.Info($"Saved proxyswitch.json with {persistent.Count} persistent route(s)");
     }
 
     /// <summary>

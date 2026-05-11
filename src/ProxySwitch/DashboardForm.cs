@@ -20,6 +20,7 @@ public class DashboardForm : Form
     private ListBox _eventList = null!;
     private Label _proxyStatusLabel = null!;
     private Label _backendStatusLabel = null!;
+    private Button _restartBackendBtn = null!;
     private System.Windows.Forms.Timer _refreshTimer = null!;
     private bool _correlatedDialogOpen;
     private readonly Queue<(LaunchSession Session, List<HandoffCandidate> Candidates)> _pendingCorrelated = new();
@@ -164,11 +165,12 @@ public class DashboardForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 2,
+            RowCount = 3,
             Padding = new Padding(4)
         };
-        proxyLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 65f));
-        proxyLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 35f));
+        proxyLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 55f));
+        proxyLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 30f));
+        proxyLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28f));
 
         _proxyStatusLabel = new Label
         {
@@ -185,6 +187,28 @@ public class DashboardForm : Form
             ForeColor = Color.DimGray
         };
         proxyLayout.Controls.Add(_backendStatusLabel, 0, 1);
+
+        // Restart ProxiFyre button — visible whenever backend type is proxifyre + enabled
+        var restartBackendBtn = new Button
+        {
+            Text = "Restart ProxiFyre (UAC)",
+            AutoSize = false,
+            Height = 24,
+            Anchor = AnchorStyles.Left | AnchorStyles.Top,
+            Visible = false
+        };
+        restartBackendBtn.Click += (_, _) =>
+        {
+            if (_backend == null) return;
+            var ok = _backend.RestartServiceElevated();
+            UpdateBackendStatus();
+            UpdateRestartButton(restartBackendBtn);
+            if (!ok)
+                _events.Add("RestartFailed", "ProxiFyre restart failed or declined");
+        };
+        _restartBackendBtn = restartBackendBtn;
+        proxyLayout.Controls.Add(restartBackendBtn, 0, 2);
+
         proxyGroup.Controls.Add(proxyLayout);
         bottomPanel.Controls.Add(proxyGroup, 0, 0);
 
@@ -224,24 +248,31 @@ public class DashboardForm : Form
             _ => null
         };
 
+        bool isPersistent = false;
+
         if (mode != "direct" && proxyId != null)
         {
             var label = LabelForProxy(proxyId, proxyId);
+            // YesNo+Cancel = three-way choice:
+            //   Yes    → save the route into proxyswitch.json (next ProxySwitch start auto-applies it)
+            //   No     → just this session (tmp, in-memory only)
+            //   Cancel → don't launch
             var result = MessageBox.Show(
-                $"Launch {name} with {label} intent.\n\n" +
-                $"ProxySwitch will start the app and monitor the session, but it does NOT route the traffic itself. " +
-                $"Routing is handled by your external router (e.g. Clash Verge / v2ray).\n\n" +
-                $"⚠ For launcher-style apps (Steam, Epic, game clients), child processes spawned afterwards are " +
-                $"not automatically covered by the router's rules unless those rules match the child executable too.\n\n" +
-                $"Continue?",
+                $"Launch {name} via {label}?\n\n" +
+                $"Yes  = Save route permanently (auto-applies next time ProxySwitch starts)\n" +
+                $"No   = Just this session (route disappears when you close ProxySwitch)\n" +
+                $"Cancel = don't launch\n\n" +
+                $"⚠ For launcher-style apps (Steam, Epic, game clients), child processes are " +
+                $"not auto-tracked — restart-after-handoff still needed.",
                 "Confirm Launch",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Information);
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question);
 
-            if (result != DialogResult.Yes) return;
+            if (result == DialogResult.Cancel) return;
+            isPersistent = (result == DialogResult.Yes);
         }
 
-        _sessions.LaunchGeneric(exePath, name, mode, proxyId);
+        _sessions.LaunchGeneric(exePath, name, mode, proxyId, isPersistent);
     }
 
     private void LaunchPinned(AppConfig app)
@@ -272,6 +303,19 @@ public class DashboardForm : Form
         RefreshSessions();
         UpdateProxyStatus();
         UpdateBackendStatus();
+        UpdateRestartButton(_restartBackendBtn);
+    }
+
+    private void UpdateRestartButton(Button btn)
+    {
+        if (btn == null) return;
+        var be = _config.TransparentBackend;
+        // Show the button whenever backend is enabled and exe path is reasonable —
+        // user can always trigger a restart, including when service is currently stopped.
+        btn.Visible = _backend != null
+            && be.Enabled
+            && be.Type == "proxifyre"
+            && !string.IsNullOrEmpty(be.Exe);
     }
 
     private void RefreshSessions()

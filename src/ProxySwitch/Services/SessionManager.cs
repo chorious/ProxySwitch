@@ -131,7 +131,7 @@ public sealed class SessionManager : IDisposable
         };
     }
 
-    public LaunchResult LaunchGeneric(string exePath, string name, string mode, string? proxyId = null)
+    public LaunchResult LaunchGeneric(string exePath, string name, string mode, string? proxyId = null, bool isPersistentRoute = true)
     {
         _events.Add("SessionCreated", $"Session for {name}");
         _events.Add("LaunchStarted", $"Starting {name} ({mode})");
@@ -143,7 +143,7 @@ public sealed class SessionManager : IDisposable
 
         // Ensure ProxiFyre route BEFORE launch so the new process is matched.
         // Returns the routing label that should appear on the session card.
-        string routingStatus = ResolveInitialRoutingStatus(exePath, mode, proxyId);
+        string routingStatus = ResolveInitialRoutingStatus(exePath, mode, proxyId, isPersistentRoute);
 
         var result = _launcher.LaunchGeneric(exePath);
 
@@ -442,7 +442,7 @@ public sealed class SessionManager : IDisposable
     /// Decide what RoutingStatus the session should start with based on mode and
     /// whether the ProxiFyre backend is configured and able to write a route.
     /// </summary>
-    private string ResolveInitialRoutingStatus(string exePath, string mode, string? proxyId)
+    private string ResolveInitialRoutingStatus(string exePath, string mode, string? proxyId, bool isPersistentRoute)
     {
         if (mode == "direct" || string.IsNullOrEmpty(proxyId))
             return "direct";
@@ -467,7 +467,8 @@ public sealed class SessionManager : IDisposable
         // status.State == "running"
         try
         {
-            _backend.EnsureRoute(exePath, proxyId, source: "drop-zone");
+            var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
+            _backend.EnsureRoute(exePath, proxyId, source: source, isPersistent: isPersistentRoute);
             var apply = _backend.Apply(restartService: _config.TransparentBackend.AutoRestartOnConfigChange);
             if (!apply.Success)
             {
@@ -476,7 +477,6 @@ public sealed class SessionManager : IDisposable
             }
             if (apply.ServiceRestarted) return "proxifyre-route-active";
             if (apply.NeedsManualRestart) return "proxifyre-route-needs-restart";
-            // No restart requested → config written but old rules still active in memory
             return "proxifyre-route-pending";
         }
         catch (Exception ex)

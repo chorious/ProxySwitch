@@ -86,6 +86,24 @@ public class MainForm : Form
         _backend = new ProxiFyreBackend(_config, _events);
         _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend);
 
+        // If we have persistent routes from a previous session, refresh ProxiFyre's
+        // app-config.json with just those (drops any leftover tmp routes from last run).
+        // We do NOT restart the service here — no UAC popup on startup.
+        if (_config.TransparentBackend.Enabled
+            && _config.TransparentBackend.Type == "proxifyre"
+            && _config.AppRoutes.Any(r => r.IsPersistent))
+        {
+            try
+            {
+                _backend.WriteConfig();
+                _events.Add("StartupConfigRefresh", $"wrote {_config.AppRoutes.Count(r => r.IsPersistent)} persistent route(s) into ProxiFyre config");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Startup config refresh failed: {ex.Message}");
+            }
+        }
+
         _monitor.Start();
         _monitor.StartPolling();
     }

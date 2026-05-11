@@ -200,7 +200,15 @@ public class AppRoute
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;
 
-    /// <summary>"drop-zone" / "pinned" / "child-detected" / "user".</summary>
+    /// <summary>
+    /// true (set)  — saved into proxyswitch.json, restored on next startup,
+    ///               and also tracked when the app is launched outside ProxySwitch.
+    /// false (tmp) — in-memory only for this ProxySwitch session.
+    /// </summary>
+    [JsonPropertyName("isPersistent")]
+    public bool IsPersistent { get; set; } = true;
+
+    /// <summary>"drop-zone-tmp" / "drop-zone-set" / "pinned" / "child-detected" / "user".</summary>
     [JsonPropertyName("source")]
     public string Source { get; set; } = "user";
 }
