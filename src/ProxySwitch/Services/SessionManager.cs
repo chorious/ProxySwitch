@@ -143,8 +143,11 @@ public sealed class SessionManager : IDisposable
         _events.Add("LaunchStarted", $"Starting {name} in {mode} mode");
 
         // Capture process baseline BEFORE launching, for correlated handoff fallback.
-        // Fire-and-forget: SessionManager will await this task later if needed.
-        var baselineTask = _processMonitor.CaptureProcessSnapshotsAsync();
+        // SYNC wait: must complete before Process.Start so launcher (and any immediate
+        // child) are NOT in baseline. WMI call is ~200-500ms on typical machines —
+        // acceptable inline given the user just clicked a drop-confirm dialog.
+        var baseline = _processMonitor.CaptureProcessSnapshotsAsync().GetAwaiter().GetResult();
+        var baselineTask = Task.FromResult(baseline);
 
         var result = _launcher.LaunchGeneric(exePath);
 
@@ -242,19 +245,35 @@ public sealed class SessionManager : IDisposable
                     var liveChild = session.Processes.FirstOrDefault(p => p.ExitedAt == null && p.Role == "descendant");
                     if (liveChild != null && !session.IsRoutingAssisted)
                     {
-                        // Check if generated profile already covers this child
+                        // Default to unverified; check generated profile asynchronously
+                        // to avoid blocking the UI thread on XML IO.
+                        session.RoutingStatus = "unverified";
+                        session.RoutingWarning = $"{liveChild.Name} is running but Proxifier routing is unverified. Generated profile may need a rule for this exe.";
+                        _events.Add("RoutingUnverified", $"{name}: {liveChild.Name} running, routing unverified");
+
                         var profileKey = ProxyIdToGeneratedKey(proxyId);
-                        if (profileKey != null && IsChildInGeneratedRule(profileKey, liveChild.Name))
+                        var childName = liveChild.Name;
+                        if (profileKey != null)
                         {
-                            session.RoutingStatus = "assisted";
-                            session.IsRoutingAssisted = true;
-                            _events.Add("LauncherHandoffDetected", $"{name}: child {liveChild.Name} already in assist rule");
-                        }
-                        else
-                        {
-                            session.RoutingStatus = "unverified";
-                            session.RoutingWarning = $"{liveChild.Name} is running but Proxifier routing is unverified. Generated profile may need a rule for this exe.";
-                            _events.Add("RoutingUnverified", $"{name}: {liveChild.Name} running, routing unverified");
+                            _ = Task.Run(() =>
+                            {
+                                try
+                                {
+                                    if (IsChildInGeneratedRule(profileKey, childName))
+                                    {
+                                        // Upgrade to assisted if already covered
+                                        session.RoutingStatus = "assisted";
+                                        session.IsRoutingAssisted = true;
+                                        session.RoutingWarning = null;
+                                        _events.Add("LauncherHandoffDetected", $"{name}: child {childName} already in assist rule");
+                                        SessionsChanged?.Invoke();
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Logger.Error($"IsChildInGeneratedRule check failed for {name}: {ex.Message}");
+                                }
+                            });
                         }
                     }
                     else

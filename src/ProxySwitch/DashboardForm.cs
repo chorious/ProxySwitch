@@ -546,8 +546,10 @@ public class DashboardForm : Form
             {
                 _sessions.AttachCorrelated(session, dlg.SelectedCandidate, ProcessTrackingConfidence.UserSelected, autoAttached: false);
             }
-            else if (dlg.Ignored)
+            else
             {
+                // X close, Cancel, or explicit Ignore → all finalize as exited.
+                // Leaving session in "checking-correlated" indefinitely is worse UX.
                 _sessions.IgnoreCorrelated(session);
             }
         }
@@ -558,7 +560,6 @@ public class DashboardForm : Form
             if (_pendingCorrelated.Count > 0)
             {
                 var next = _pendingCorrelated.Dequeue();
-                // Re-enter via BeginInvoke so the current call stack unwinds first
                 BeginInvoke(() => ShowCorrelatedDialog(next.Session, next.Candidates));
             }
         }
