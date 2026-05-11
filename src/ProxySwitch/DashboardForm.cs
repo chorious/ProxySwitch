@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using ProxySwitch.Controls;
 using ProxySwitch.Models;
 using ProxySwitch.Services;
 
@@ -66,9 +67,17 @@ public class DashboardForm : Form
         for (int i = 0; i < 3; i++)
             zonePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
 
-        zonePanel.Controls.Add(CreateZone("Direct", "Drop app here", "direct", Color.FromArgb(200, 200, 200)), 0, 0);
-        zonePanel.Controls.Add(CreateZone("10708", "Drop app here", "proxy-10708", Color.FromArgb(34, 197, 94)), 1, 0);
-        zonePanel.Controls.Add(CreateZone("10808", "Drop app here", "proxy-10808", Color.FromArgb(59, 130, 246)), 2, 0);
+        var directZone = new LaunchZoneControl { Title = "Direct", Mode = "direct", AccentColor = Color.FromArgb(200, 200, 200), Dock = DockStyle.Fill, Margin = new Padding(4) };
+        directZone.FileDropped += path => HandleDrop(path, "direct");
+        zonePanel.Controls.Add(directZone, 0, 0);
+
+        var z10708 = new LaunchZoneControl { Title = "10708", Mode = "proxy-10708", AccentColor = Color.FromArgb(34, 197, 94), Dock = DockStyle.Fill, Margin = new Padding(4) };
+        z10708.FileDropped += path => HandleDrop(path, "proxy-10708");
+        zonePanel.Controls.Add(z10708, 1, 0);
+
+        var z10808 = new LaunchZoneControl { Title = "10808", Mode = "proxy-10808", AccentColor = Color.FromArgb(59, 130, 246), Dock = DockStyle.Fill, Margin = new Padding(4) };
+        z10808.FileDropped += path => HandleDrop(path, "proxy-10808");
+        zonePanel.Controls.Add(z10808, 2, 0);
         mainLayout.Controls.Add(zonePanel, 0, 0);
 
         // Row 1: Pinned Apps
@@ -148,47 +157,6 @@ public class DashboardForm : Form
         UpdateProxyStatus();
         RefreshSessions();
         RefreshEvents();
-    }
-
-    private Panel CreateZone(string title, string subtitle, string mode, Color color)
-    {
-        var panel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(30, color),
-            BorderStyle = BorderStyle.FixedSingle,
-            Margin = new Padding(4),
-            AllowDrop = true
-        };
-
-        var lbl = new Label
-        {
-            Text = $"{title}\n{subtitle}",
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font(Font.FontFamily, 11f, FontStyle.Bold),
-            ForeColor = color
-        };
-        panel.Controls.Add(lbl);
-
-        panel.DragEnter += (s, e) =>
-        {
-            if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
-                e.Effect = DragDropEffects.Copy;
-        };
-
-        panel.DragDrop += (s, e) =>
-        {
-            var files = e.Data?.GetData(DataFormats.FileDrop) as string[];
-            if (files?.Length > 0)
-            {
-                var exe = files.FirstOrDefault(f => f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
-                if (exe != null)
-                    HandleDrop(exe, mode);
-            }
-        };
-
-        return panel;
     }
 
     private void HandleDrop(string exePath, string mode)
