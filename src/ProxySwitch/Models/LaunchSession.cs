@@ -5,12 +5,14 @@ public sealed class LaunchSession
     public string Id { get; init; } = Guid.NewGuid().ToString("N")[..8];
     public string Name { get; init; } = "";
     public string ExePath { get; init; } = "";
+    public string Kind { get; init; } = "generic"; // "browser" or "generic"
     public string Mode { get; init; } = "direct"; // direct, proxy
     public string? ProxyId { get; init; }
     public string? UserDataDir { get; init; }
     public DateTime StartedAt { get; init; } = DateTime.Now;
     public DateTime? ExitedAt { get; set; }
     public int? RootProcessId { get; set; }
+    public DateTime? RootCreatedAt { get; set; }
     public List<TrackedProcess> Processes { get; } = [];
     public string Status { get; set; } = "starting"; // starting, running, running-via-child, exited, failed
     public string RoutingStatus { get; set; } = "unknown"; // unknown, direct, browser-arg, profile-loaded, assisted, unverified
@@ -23,16 +25,27 @@ public sealed class LaunchSession
     {
         get
         {
-            // Return the most recently added live process, or root if still alive
-            var live = Processes.Where(p => p.ExitedAt == null).ToList();
-            if (live.Count == 0) return null;
-            // Prefer descendants over root (launcher handoff)
-            var descendant = live.LastOrDefault(p => p.Role == "descendant");
-            return descendant?.ProcessId ?? live.LastOrDefault()?.ProcessId;
+            lock (Processes)
+            {
+                var live = Processes.Where(p => p.ExitedAt == null).ToList();
+                if (live.Count == 0) return null;
+                // Prefer root if still alive, otherwise the earliest descendant
+                var root = live.FirstOrDefault(p => p.Role == "root");
+                if (root != null) return root.ProcessId;
+                return live.FirstOrDefault()?.ProcessId;
+            }
         }
     }
 
-    public bool HasLiveProcesses => Processes.Any(p => p.ExitedAt == null);
+    public bool HasLiveProcesses
+    {
+        get { lock (Processes) return Processes.Any(p => p.ExitedAt == null); }
+    }
+
+    public int LiveProcessCount
+    {
+        get { lock (Processes) return Processes.Count(p => p.ExitedAt == null); }
+    }
 
     public TimeSpan? Duration => ExitedAt.HasValue
         ? ExitedAt.Value - StartedAt

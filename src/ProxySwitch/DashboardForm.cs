@@ -169,6 +169,8 @@ public class DashboardForm : Form
             _ => null
         };
 
+        bool profileLoaded = false;
+
         // Try to auto-load matching Proxifier profile before launching
         if (mode != "direct" && _config.Proxifier.Enabled)
         {
@@ -184,14 +186,15 @@ public class DashboardForm : Form
                 File.Exists(profilePath))
             {
                 _launcher.LoadProxifierProfile(profileKey);
+                profileLoaded = true;
             }
             else
             {
                 var result = MessageBox.Show(
                     $"No matching Proxifier profile found for {mode}.\n" +
-                    $"ProxySwitch will start the app but traffic routing depends on current Proxifier rules.\n\n" +
-                    $"⚠ Launcher apps (Steam / Epic / game clients) start child processes that ProxySwitch cannot track yet, " +
-                    $"and Proxifier rules do not auto-apply to children. Confirm your Proxifier profile covers the target.\n\n" +
+                    $"ProxySwitch will start the app but traffic routing is unverified.\n\n" +
+                    $"⚠ Launcher apps (Steam / Epic / game clients) start child processes that Proxifier rules do not auto-apply to. " +
+                    $"Confirm your Proxifier profile covers the target.\n\n" +
                     $"Run {name} anyway?",
                     "Confirm Launch",
                     MessageBoxButtons.YesNo,
@@ -201,7 +204,7 @@ public class DashboardForm : Form
             }
         }
 
-        _sessions.LaunchGeneric(exePath, name, mode, proxyId);
+        _sessions.LaunchGeneric(exePath, name, mode, proxyId, profileLoaded);
     }
 
     private void LaunchPinned(AppConfig app)
@@ -405,31 +408,27 @@ public class DashboardForm : Form
         var liveChild = session.Processes.FirstOrDefault(p => p.ExitedAt == null && p.Role == "descendant");
         if (liveChild == null) return;
 
-        var profileKey = session.ProxyId switch
+        var launcherName = Path.GetFileName(session.ExePath);
+        var proxyLabel = session.ProxyId switch
         {
-            "p10708" => "all10708",
-            "p10808" => "all10808",
-            _ => null
+            "p10708" => "10708",
+            "p10808" => "10808",
+            _ => session.ProxyId ?? "?"
         };
-        if (profileKey == null)
-        {
-            MessageBox.Show("No matching Proxifier profile mapped for this proxy.", "Cannot Assist",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
 
         var result = MessageBox.Show(
-            $"Add {liveChild.Name} to the {session.ProxyId} Proxifier rule?\n\n" +
-            $"This routes future connections from {liveChild.Name} through the configured proxy.\n" +
-            $"Note: The rule is executable-based, not limited to this PID. " +
-            $"Other instances of {liveChild.Name} elsewhere may also be routed.",
+            $"Add {launcherName} and {liveChild.Name} to the {proxyLabel} assist rule?\n\n" +
+            $"This will update the generated-{proxyLabel}.ppx Proxifier profile (rule: ProxySwitch_{proxyLabel}_AssistedApps) " +
+            $"to include both executables, then load the generated profile.\n\n" +
+            $"⚠ The rule is executable-based, NOT PID-isolated. Other instances of {liveChild.Name} elsewhere may also be routed through {proxyLabel}.\n\n" +
+            $"Prerequisite: You must have already created the generated profile in Proxifier with the rule name 'ProxySwitch_{proxyLabel}_AssistedApps'.",
             "Add Assist Rule",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question);
 
         if (result == DialogResult.Yes)
         {
-            _sessions.AssistRouting(session, profileKey);
+            _sessions.AddAssistRule(session);
         }
     }
 

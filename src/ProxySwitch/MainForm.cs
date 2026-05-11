@@ -82,7 +82,7 @@ public class MainForm : Form
 
         _launcher = new AppLauncher(_config);
         _processMonitor = new ProcessMonitor();
-        _sessionManager = new SessionManager(_launcher, _processMonitor, _events);
+        _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config);
 
         _monitor.Start();
         _monitor.StartPolling();

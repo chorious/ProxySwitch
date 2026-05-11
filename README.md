@@ -73,10 +73,26 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.3 | ✅ | Dashboard、Drop Zone、Session Tracking、30s 心跳 |
 | v0.3.1 | ✅ | 修复 Drop Zone bug + `.lnk` 支持 + ProcessMonitor 后台化 |
 | v0.3.2 | ✅ | Session 卡片刷新、Drop zone 重绘、WorkingDirectory 修复 |
-| v0.4 | ✅ | 子进程跟踪、launcher handoff 检测、Proxifier Assist 提示 |
+| v0.4 | ✅ | 子进程跟踪、launcher handoff 检测、Proxifier Assist 提示（UI 空壳） |
+| v0.4.1 | ✅ | Assist Mode 实装（XML 写 .ppx）、PID 复用守卫、浏览器不走 handoff、WMI 字段裁剪 |
 | v0.5 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
 | v0.6 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
 | v1.0 | 📋 | 安装包、开机自启 |
+
+## v0.4.1 Assist Mode 使用
+
+ProxySwitch 不能自动给 launcher 启动的 child 进程加 Proxifier 规则——这是 Proxifier 自己的限制（规则按 exe 名匹配，不会自动继承）。Assist Mode 是 ProxySwitch 提供的协助路径：
+
+1. **在 Proxifier 里建好 base 模板**（一次性）：
+   - 创建 `generated-10708.ppx`，里面有一个空规则 `ProxySwitch_10708_AssistedApps` 指向 SOCKS5 127.0.0.1:10708
+   - 同理建 `generated-10808.ppx`
+   - 见 `profiles/proxifier/README.md`
+2. **拖一个 launcher 类应用到 10708 zone**
+3. 当 launcher 退出但 child 还在跑时，Dashboard 上 session 卡片变黄、显示 `Via child` 状态、底部出现 ⚠ 警告条 + `Add Rule` 按钮
+4. **点 Add Rule** — ProxySwitch 把 launcher.exe 和 child.exe 写入 `generated-10708.ppx` 的规则 `Applications`，然后通知 Proxifier 重新加载
+5. 卡片状态变成 `assisted`，未来 child 进程的流量就走 10708 了
+
+⚠ 规则是 exe 名匹配，不限 PID。其他地方启动同名 exe 也会被路由。
 
 ## License
 

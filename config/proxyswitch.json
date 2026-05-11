@@ -62,7 +62,9 @@
       "direct": "E:\\proxyswitch\\profiles\\proxifier\\direct.ppx",
       "all10708": "E:\\proxyswitch\\profiles\\proxifier\\all-10708.ppx",
       "all10808": "E:\\proxyswitch\\profiles\\proxifier\\all-10808.ppx",
-      "mixed": "E:\\proxyswitch\\profiles\\proxifier\\mixed-rules.ppx"
+      "mixed": "E:\\proxyswitch\\profiles\\proxifier\\mixed-rules.ppx",
+      "generated10708": "E:\\proxyswitch\\profiles\\proxifier\\generated-10708.ppx",
+      "generated10808": "E:\\proxyswitch\\profiles\\proxifier\\generated-10808.ppx"
     }
   }
 }
