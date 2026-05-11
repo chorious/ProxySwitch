@@ -451,12 +451,13 @@ public class ProxiFyreBackend
 
         try
         {
-            // sc stop, wait, sc start. Hide window via cmd /c so user doesn't see
-            // a black flash beyond the UAC prompt itself.
+            // sc stop, wait 2s, sc start. Hide window via cmd /c so user doesn't see
+            // a black flash beyond the UAC prompt itself. Suppress sc errors when
+            // the service is already stopped (we still want sc start to run).
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = $"/c sc.exe stop \"{name}\" >nul 2>&1 & timeout /t 1 /nobreak >nul & sc.exe start \"{name}\" >nul 2>&1",
+                Arguments = $"/c sc.exe stop \"{name}\" >nul 2>&1 & timeout /t 2 /nobreak >nul & sc.exe start \"{name}\" >nul 2>&1",
                 UseShellExecute = true,
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden,
@@ -471,17 +472,26 @@ public class ProxiFyreBackend
                 return false;
             }
 
-            // Verify the service is actually running now.
-            using var sc = new ServiceController(name);
-            sc.Refresh();
-            if (sc.Status == ServiceControllerStatus.Running)
+            // sc.exe returns before the service is actually Running (it's still in
+            // StartPending). Wait up to 10s for the Running transition.
+            try
             {
+                using var sc = new ServiceController(name);
+                sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
                 Logger.Info($"Service {name} restarted via UAC-elevated helper");
                 _events.Add("ServiceRestarted", $"{name}: restarted (elevated)");
                 return true;
             }
-            _events.Add("ServiceRestartFailed", $"{name}: still not running after elevated restart");
-            return false;
+            catch (System.ServiceProcess.TimeoutException)
+            {
+                _events.Add("ServiceRestartFailed", $"{name}: did not reach Running within 10s");
+                return false;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _events.Add("ServiceRestartFailed", $"{name}: {ex.Message}");
+                return false;
+            }
         }
         catch (System.ComponentModel.Win32Exception ex) when ((uint)ex.NativeErrorCode == 0x800704C7)
         {

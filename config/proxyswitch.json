@@ -107,5 +107,16 @@
     "manageService": false,
     "autoRestartOnConfigChange": true
   },
-  "appRoutes": []
+  "appRoutes": [
+    {
+      "id": "Obsidian-p10708-a4bfb2",
+      "name": "Obsidian.exe via p10708",
+      "exePath": "D:\\Program Files\\Obsidian\\Obsidian.exe",
+      "processName": "Obsidian.exe",
+      "proxyId": "p10708",
+      "enabled": true,
+      "isPersistent": true,
+      "source": "drop-zone-set"
+    }
+  ]
 }

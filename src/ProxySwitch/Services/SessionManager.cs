@@ -452,6 +452,7 @@ public sealed class SessionManager : IDisposable
             return "external-routing-required";
 
         var status = _backend.GetStatus();
+        // Genuine "can't proceed" cases — exe / service / driver missing.
         switch (status.State)
         {
             case "not-configured":
@@ -459,12 +460,10 @@ public sealed class SessionManager : IDisposable
             case "service-not-installed":
                 _events.Add("BackendNotReady", $"ProxiFyre: {status.State} — {status.Message}");
                 return "external-routing-required";
-            case "stopped":
-                _events.Add("BackendNotReady", $"ProxiFyre service is installed but not running — start it manually");
-                return "external-routing-required";
         }
 
-        // status.State == "running"
+        // "running" or "stopped" — both proceed: stopped just means the upcoming
+        // elevated restart needs to start the service rather than restart it.
         try
         {
             var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
