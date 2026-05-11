@@ -16,6 +16,11 @@ profiles/
 logs/
 plan&review/
 
+# App leak files (pre-v0.3.2 CWD bug residue)
+launcher.log
+unisdkntdetectcache
+*.log
+
 # OS
 .DS_Store
 Thumbs.db
