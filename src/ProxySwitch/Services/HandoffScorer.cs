@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
 using ProxySwitch.Models;
 
 namespace ProxySwitch.Services;
@@ -122,6 +124,13 @@ public class HandoffScorer
                 reasons.Add("similar process name (+10)");
             }
 
+            // Visible main window signal
+            if (HasVisibleWindowWithTitle(proc.ProcessId))
+            {
+                score += 15;
+                reasons.Add("visible main window (+15)");
+            }
+
             // Confidence buckets
             string confidence;
             if (score >= 70) confidence = "high";
@@ -178,5 +187,40 @@ public class HandoffScorer
         if (aBase.Length < 3 || bBase.Length < 3) return false;
         // Substring match either direction
         return aBase.Contains(bBase) || bBase.Contains(aBase);
+    }
+
+    // -- Visible window detection (P/Invoke) --
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    private static bool HasVisibleWindowWithTitle(int pid)
+    {
+        bool found = false;
+        try
+        {
+            EnumWindows((hWnd, _) =>
+            {
+                GetWindowThreadProcessId(hWnd, out var procId);
+                if (procId != (uint)pid) return true;
+                if (!IsWindowVisible(hWnd)) return true;
+                if (GetWindowTextLength(hWnd) <= 0) return true;
+                found = true;
+                return false; // stop enumeration
+            }, IntPtr.Zero);
+        }
+        catch { }
+        return found;
     }
 }

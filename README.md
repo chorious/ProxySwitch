@@ -76,6 +76,7 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.4 | ✅ | 子进程跟踪、launcher handoff 检测、Proxifier Assist 提示（UI 空壳） |
 | v0.4.1 | ✅ | Assist Mode 实装（XML 写 .ppx）、PID 复用守卫、浏览器不走 handoff、WMI 字段裁剪 |
 | v0.4.2 | ✅ | Correlated Handoff Tracking（ShellExecute / COM / UAC handoff 检测） |
+| v0.4.3 | ✅ | Add Rule 支持 correlated、原子写 .ppx、Dialog 队列化、可见窗口信号 |
 | v0.5 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
 | v0.6 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
 | v1.0 | 📋 | 安装包、开机自启 |

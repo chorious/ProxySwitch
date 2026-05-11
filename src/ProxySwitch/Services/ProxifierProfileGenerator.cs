@@ -53,7 +53,18 @@ public class ProxifierProfileGenerator
         if (!changed) return false;
 
         appsNode.InnerText = string.Join("; ", existing.OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
-        doc.Save(profilePath);
+
+        // Atomic write: tmp + rename. Backup once.
+        var backupPath = profilePath + ".bak";
+        if (!File.Exists(backupPath))
+        {
+            try { File.Copy(profilePath, backupPath); } catch { /* best effort */ }
+        }
+
+        var tempPath = profilePath + ".tmp";
+        doc.Save(tempPath);
+        File.Move(tempPath, profilePath, overwrite: true);
+
         Logger.Info($"Updated {Path.GetFileName(profilePath)} rule '{ruleName}' with apps: {string.Join(", ", exeNames)}");
         return true;
     }

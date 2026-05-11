@@ -18,6 +18,8 @@ public class DashboardForm : Form
     private ListBox _eventList = null!;
     private Label _proxyStatusLabel = null!;
     private System.Windows.Forms.Timer _refreshTimer = null!;
+    private bool _correlatedDialogOpen;
+    private readonly Queue<(LaunchSession Session, List<HandoffCandidate> Candidates)> _pendingCorrelated = new();
 
     public DashboardForm(ProxyConfig config, PortMonitor monitor, SessionManager sessions, EventStore events, AppLauncher launcher)
     {
@@ -416,7 +418,8 @@ public class DashboardForm : Form
 
     private void HandleAddRule(LaunchSession session)
     {
-        var liveChild = session.Processes.FirstOrDefault(p => p.ExitedAt == null && p.Role == "descendant");
+        var liveChild = session.Processes.FirstOrDefault(p =>
+            p.ExitedAt == null && (p.Role == "descendant" || p.Role == "correlated"));
         if (liveChild == null) return;
 
         var launcherName = Path.GetFileName(session.ExePath);
@@ -522,21 +525,42 @@ public class DashboardForm : Form
     {
         if (InvokeRequired) { Invoke(() => OnCorrelatedCandidatesFound(session, candidates)); return; }
 
-        using var dlg = new CorrelatedHandoffDialog(session, candidates);
-        var result = dlg.ShowDialog(this);
-        if (result == DialogResult.OK && dlg.SelectedCandidate != null)
+        // Reentrancy guard: queue if a dialog is already open
+        if (_correlatedDialogOpen)
         {
-            var confidence = dlg.SelectedCandidate.Confidence == "high"
-                ? ProcessTrackingConfidence.CorrelatedHigh
-                : ProcessTrackingConfidence.CorrelatedMedium;
-            // User-selected → mark as UserSelected to make audit trail clear
-            _sessions.AttachCorrelated(session, dlg.SelectedCandidate, ProcessTrackingConfidence.UserSelected, autoAttached: false);
+            _pendingCorrelated.Enqueue((session, candidates));
+            return;
         }
-        else if (dlg.Ignored)
+
+        ShowCorrelatedDialog(session, candidates);
+    }
+
+    private void ShowCorrelatedDialog(LaunchSession session, List<HandoffCandidate> candidates)
+    {
+        _correlatedDialogOpen = true;
+        try
         {
-            _sessions.IgnoreCorrelated(session);
+            using var dlg = new CorrelatedHandoffDialog(session, candidates);
+            var result = dlg.ShowDialog(this);
+            if (result == DialogResult.OK && dlg.SelectedCandidate != null)
+            {
+                _sessions.AttachCorrelated(session, dlg.SelectedCandidate, ProcessTrackingConfidence.UserSelected, autoAttached: false);
+            }
+            else if (dlg.Ignored)
+            {
+                _sessions.IgnoreCorrelated(session);
+            }
         }
-        // If dialog closed via X, leave session in checking-correlated state
-        // (next refresh tick will not auto-resolve, user can re-open via event re-fire if needed)
+        finally
+        {
+            _correlatedDialogOpen = false;
+            // Process next queued, if any
+            if (_pendingCorrelated.Count > 0)
+            {
+                var next = _pendingCorrelated.Dequeue();
+                // Re-enter via BeginInvoke so the current call stack unwinds first
+                BeginInvoke(() => ShowCorrelatedDialog(next.Session, next.Candidates));
+            }
+        }
     }
 }

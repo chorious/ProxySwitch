@@ -6,6 +6,7 @@ public sealed class SessionManager : IDisposable
 {
     private readonly List<LaunchSession> _sessions = new();
     private readonly Dictionary<string, Task<List<ProcessSnapshot>>> _baselines = new();
+    private readonly Dictionary<string, CancellationTokenSource> _sessionCts = new();
     private readonly AppLauncher _launcher;
     private readonly ProcessMonitor _processMonitor;
     private readonly EventStore _events;
@@ -191,6 +192,8 @@ public sealed class SessionManager : IDisposable
 
         lock (_sessions) _sessions.Add(session);
         lock (_baselines) _baselines[session.Id] = baselineTask;
+        var cts = new CancellationTokenSource();
+        lock (_sessionCts) _sessionCts[session.Id] = cts;
         SessionsChanged?.Invoke();
         _events.Add("LaunchSucceeded", $"{name} started, PID={result.ProcessId}");
 
@@ -290,8 +293,9 @@ public sealed class SessionManager : IDisposable
             {
                 try
                 {
-                    await MonitorDescendantsAsync(session);
+                    await MonitorDescendantsAsync(session, cts.Token);
                 }
+                catch (OperationCanceledException) { /* expected on RemoveSession/Dispose */ }
                 catch (Exception ex) { Logger.Error($"MonitorDescendants for {name} failed: {ex.Message}"); }
             });
         }
@@ -305,17 +309,27 @@ public sealed class SessionManager : IDisposable
         };
     }
 
-    private async Task MonitorDescendantsAsync(LaunchSession session)
+    private async Task MonitorDescendantsAsync(LaunchSession session, CancellationToken ct)
     {
-        // Poll every 2s for descendant process exits
-        while (session.Status != "exited" && session.Status != "failed")
+        // Poll every 2s for descendant/correlated process exits.
+        // Exits when:
+        //  - no more live processes (session naturally exited)
+        //  - session status is terminal
+        //  - cancellation requested (RemoveSession or Dispose)
+        while (!ct.IsCancellationRequested
+               && session.HasLiveProcesses
+               && session.Status != "exited"
+               && session.Status != "failed")
         {
-            await Task.Delay(2000);
+            try { await Task.Delay(2000, ct); }
+            catch (OperationCanceledException) { break; }
 
             bool anyChanged = false;
             lock (session.Processes)
             {
-                foreach (var proc in session.Processes.Where(p => p.ExitedAt == null && p.Role == "descendant").ToList())
+                foreach (var proc in session.Processes
+                    .Where(p => p.ExitedAt == null && (p.Role == "descendant" || p.Role == "correlated"))
+                    .ToList())
                 {
                     if (!ProcessMonitor.IsAlive(proc.ProcessId))
                     {
@@ -327,8 +341,8 @@ public sealed class SessionManager : IDisposable
 
             if (anyChanged)
             {
-                _events.Add("ProcessExited", $"{session.Name}: descendant exited");
-                if (!session.HasLiveProcesses && session.Status == "running-via-child")
+                _events.Add("ProcessExited", $"{session.Name}: tracked process exited");
+                if (!session.HasLiveProcesses && session.Status is "running-via-child" or "running-via-correlated")
                 {
                     session.Status = "exited";
                     session.ExitedAt = DateTime.Now;
@@ -448,7 +462,9 @@ public sealed class SessionManager : IDisposable
         session.Status = "running-via-correlated";
         session.IsLauncherHandoffDetected = true;
         session.RoutingStatus = "unverified";
-        session.RoutingWarning = $"{proc.Name} appears to be the handoff target (score {candidate.Score}). Routing through Proxifier is unverified.";
+        session.RoutingWarning =
+            $"⚠ Correlated handoff (inferred, not proven): {proc.Name} matched score {candidate.Score}. " +
+            $"Proxifier may need a separate rule for this exe — routing is unverified.";
 
         var verb = autoAttached ? "auto-attached" : "user-attached";
         _events.Add("CorrelatedHandoffAttached", $"{session.Name}: {verb} {proc.Name} (PID={proc.ProcessId}, score={candidate.Score}, confidence={candidate.Confidence})");
@@ -528,10 +544,11 @@ public sealed class SessionManager : IDisposable
             return false;
         }
 
-        var liveChild = session.Processes.FirstOrDefault(p => p.ExitedAt == null && p.Role == "descendant");
+        var liveChild = session.Processes.FirstOrDefault(p =>
+            p.ExitedAt == null && (p.Role == "descendant" || p.Role == "correlated"));
         if (liveChild == null)
         {
-            _events.Add("AssistRuleFailed", $"{session.Name}: no live descendant to add");
+            _events.Add("AssistRuleFailed", $"{session.Name}: no live descendant or correlated process to add");
             return false;
         }
 
@@ -613,11 +630,31 @@ public sealed class SessionManager : IDisposable
         {
             _sessions.Remove(session);
         }
+        // Cancel the descendant monitor task
+        CancellationTokenSource? cts = null;
+        lock (_sessionCts)
+        {
+            if (_sessionCts.TryGetValue(session.Id, out cts))
+                _sessionCts.Remove(session.Id);
+        }
+        try { cts?.Cancel(); cts?.Dispose(); } catch { }
+        lock (_baselines) _baselines.Remove(session.Id);
         SessionsChanged?.Invoke();
     }
 
     public void Dispose()
     {
+        // Cancel all session monitors
+        List<CancellationTokenSource> all;
+        lock (_sessionCts)
+        {
+            all = _sessionCts.Values.ToList();
+            _sessionCts.Clear();
+        }
+        foreach (var cts in all)
+        {
+            try { cts.Cancel(); cts.Dispose(); } catch { }
+        }
         // ProcessMonitor is owned by MainForm, do not dispose here
     }
 }
