@@ -1,0 +1,68 @@
+{
+  "proxies": [
+    {
+      "id": "p10708",
+      "name": "Local 10708",
+      "type": "socks5",
+      "host": "127.0.0.1",
+      "port": 10708
+    },
+    {
+      "id": "p10808",
+      "name": "Local 10808",
+      "type": "socks5",
+      "host": "127.0.0.1",
+      "port": 10808
+    }
+  ],
+  "apps": [
+    {
+      "id": "chrome-direct",
+      "name": "Chrome Direct",
+      "exe": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "mode": "browser-direct",
+      "userDataDir": "E:\\proxyswitch\\profiles\\chrome-direct"
+    },
+    {
+      "id": "chrome-10708",
+      "name": "Chrome via 10708",
+      "exe": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "mode": "browser-proxy",
+      "proxyId": "p10708",
+      "userDataDir": "E:\\proxyswitch\\profiles\\chrome-10708"
+    },
+    {
+      "id": "chrome-10808",
+      "name": "Chrome via 10808",
+      "exe": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "mode": "browser-proxy",
+      "proxyId": "p10808",
+      "userDataDir": "E:\\proxyswitch\\profiles\\chrome-10808"
+    },
+    {
+      "id": "edge-direct",
+      "name": "Edge Direct",
+      "exe": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "mode": "browser-direct",
+      "userDataDir": "E:\\proxyswitch\\profiles\\edge-direct"
+    },
+    {
+      "id": "edge-10708",
+      "name": "Edge via 10708",
+      "exe": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "mode": "browser-proxy",
+      "proxyId": "p10708",
+      "userDataDir": "E:\\proxyswitch\\profiles\\edge-10708"
+    }
+  ],
+  "proxifier": {
+    "enabled": true,
+    "exe": "C:\\Program Files (x86)\\Proxifier\\Proxifier.exe",
+    "profiles": {
+      "direct": "E:\\proxyswitch\\profiles\\proxifier\\direct.ppx",
+      "all10708": "E:\\proxyswitch\\profiles\\proxifier\\all-10708.ppx",
+      "all10808": "E:\\proxyswitch\\profiles\\proxifier\\all-10808.ppx",
+      "mixed": "E:\\proxyswitch\\profiles\\proxifier\\mixed-rules.ppx"
+    }
+  }
+}

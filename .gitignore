@@ -1,0 +1,23 @@
+# Build outputs
+bin/
+obj/
+publish/
+*.exe
+*.pdb
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Runtime data
+profiles/
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NuGet
+*.nupkg
