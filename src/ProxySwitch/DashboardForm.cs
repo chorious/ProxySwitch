@@ -14,21 +14,24 @@ public class DashboardForm : Form
     private readonly EventStore _events;
     private readonly AppLauncher _launcher;
     private readonly RoutingHintService _hintService;
+    private readonly ProxiFyreBackend? _backend;
 
     private FlowLayoutPanel _sessionPanel = null!;
     private ListBox _eventList = null!;
     private Label _proxyStatusLabel = null!;
+    private Label _backendStatusLabel = null!;
     private System.Windows.Forms.Timer _refreshTimer = null!;
     private bool _correlatedDialogOpen;
     private readonly Queue<(LaunchSession Session, List<HandoffCandidate> Candidates)> _pendingCorrelated = new();
 
-    public DashboardForm(ProxyConfig config, PortMonitor monitor, SessionManager sessions, EventStore events, AppLauncher launcher)
+    public DashboardForm(ProxyConfig config, PortMonitor monitor, SessionManager sessions, EventStore events, AppLauncher launcher, ProxiFyreBackend? backend = null)
     {
         _config = config;
         _monitor = monitor;
         _sessions = sessions;
         _events = events;
         _launcher = launcher;
+        _backend = backend;
         _hintService = new RoutingHintService(config);
 
         Text = "ProxySwitch Dashboard";
@@ -156,14 +159,33 @@ public class DashboardForm : Form
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35f));
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65f));
 
-        var proxyGroup = new GroupBox { Text = "Proxies", Dock = DockStyle.Fill };
+        var proxyGroup = new GroupBox { Text = "Proxies & Backend", Dock = DockStyle.Fill };
+        var proxyLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Padding = new Padding(4)
+        };
+        proxyLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 65f));
+        proxyLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 35f));
+
         _proxyStatusLabel = new Label
         {
             Dock = DockStyle.Fill,
             Text = "Checking...",
-            Padding = new Padding(4)
         };
-        proxyGroup.Controls.Add(_proxyStatusLabel);
+        proxyLayout.Controls.Add(_proxyStatusLabel, 0, 0);
+
+        _backendStatusLabel = new Label
+        {
+            Dock = DockStyle.Fill,
+            Text = "Backend: —",
+            Font = new Font(Font.FontFamily, 8.5f),
+            ForeColor = Color.DimGray
+        };
+        proxyLayout.Controls.Add(_backendStatusLabel, 0, 1);
+        proxyGroup.Controls.Add(proxyLayout);
         bottomPanel.Controls.Add(proxyGroup, 0, 0);
 
         var eventGroup = new GroupBox { Text = "Events", Dock = DockStyle.Fill };
@@ -249,6 +271,7 @@ public class DashboardForm : Form
     {
         RefreshSessions();
         UpdateProxyStatus();
+        UpdateBackendStatus();
     }
 
     private void RefreshSessions()
@@ -361,8 +384,29 @@ public class DashboardForm : Form
             };
             btnPanel.Controls.Add(stopBtn);
 
-            // Copy Rule Hint — only meaningful when proxy intent is set
-            if (session.RoutingStatus == "external-routing-required")
+            // Route Detected Child — only when backend is up and a live child/correlated proc exists
+            if (_backend != null
+                && _config.TransparentBackend.Enabled
+                && session.RoutingStatus.StartsWith("proxifyre-")
+                && session.Processes.Any(p => p.ExitedAt == null && p.Role != "root"))
+            {
+                var routeBtn = new Button { Text = "Route Child", AutoSize = true, Height = 24 };
+                routeBtn.Click += (_, _) =>
+                {
+                    var child = session.Processes.FirstOrDefault(p => p.ExitedAt == null && p.Role != "root");
+                    if (child == null) return;
+                    if (MessageBox.Show(
+                            $"Add {child.Name} to ProxiFyre route for {session.ProxyId}?\n\n" +
+                            $"ProxiFyre routing is executable-based. Existing connections may not move — restart the app if routing does not change.",
+                            "Route Detected Child", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                    {
+                        _sessions.RouteDetectedChild(session);
+                    }
+                };
+                btnPanel.Controls.Add(routeBtn);
+            }
+            // Copy Rule Hint — fallback when backend is not running ProxySwitch's path
+            else if (session.RoutingStatus == "external-routing-required")
             {
                 var hintBtn = new Button { Text = "Copy Rule Hint", AutoSize = true, Height = 24 };
                 hintBtn.Click += (_, _) => CopyRuleHint(session);
@@ -401,12 +445,18 @@ public class DashboardForm : Form
         "direct" => "Direct",
         "browser-proxy-active" => "Browser proxy",
         "external-routing-required" => "External router",
+        "proxifyre-route-active" => "ProxiFyre active",
+        "proxifyre-route-pending" => "ProxiFyre pending",
+        "proxifyre-route-failed" => "ProxiFyre failed",
         _ => session.RoutingStatus
     };
 
     private static Color RoutingColor(string routingStatus) => routingStatus switch
     {
         "browser-proxy-active" => Color.FromArgb(22, 101, 52),
+        "proxifyre-route-active" => Color.FromArgb(22, 101, 52),
+        "proxifyre-route-pending" => Color.FromArgb(146, 64, 14),
+        "proxifyre-route-failed" => Color.Firebrick,
         "external-routing-required" => Color.FromArgb(146, 64, 14),
         _ => Color.DimGray
     };
@@ -506,6 +556,49 @@ public class DashboardForm : Form
             }
         }
         _proxyStatusLabel.Text = string.Join("\n", lines);
+    }
+
+    private void UpdateBackendStatus()
+    {
+        if (_backend == null)
+        {
+            _backendStatusLabel.Text = "Backend: not initialized";
+            _backendStatusLabel.ForeColor = Color.DimGray;
+            return;
+        }
+        var s = _backend.GetStatus();
+        var prefix = _config.TransparentBackend.Type switch
+        {
+            "proxifyre" => "ProxiFyre",
+            _ => "Backend"
+        };
+        switch (s.State)
+        {
+            case "disabled":
+                _backendStatusLabel.Text = $"{prefix}: disabled (generic apps fall back to external router)";
+                _backendStatusLabel.ForeColor = Color.DimGray;
+                break;
+            case "not-configured":
+                _backendStatusLabel.Text = $"{prefix}: not configured — {s.Message}";
+                _backendStatusLabel.ForeColor = Color.FromArgb(146, 64, 14);
+                break;
+            case "exe-missing":
+                _backendStatusLabel.Text = $"{prefix}: exe missing — {s.Message}";
+                _backendStatusLabel.ForeColor = Color.Firebrick;
+                break;
+            case "running":
+                _backendStatusLabel.Text = $"{prefix}: running ({(s.ServiceRunning ? "service" : "process")})  Config: {s.ConfigPath}";
+                _backendStatusLabel.ForeColor = Color.FromArgb(22, 101, 52);
+                break;
+            case "stopped":
+                _backendStatusLabel.Text = $"{prefix}: stopped (config written but not active)  Config: {s.ConfigPath}";
+                _backendStatusLabel.ForeColor = Color.FromArgb(146, 64, 14);
+                break;
+            default:
+                _backendStatusLabel.Text = $"{prefix}: {s.State}";
+                _backendStatusLabel.ForeColor = Color.DimGray;
+                break;
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

@@ -78,7 +78,7 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.4.2 | ✅ | Correlated Handoff Tracking（ShellExecute / COM / UAC handoff 检测） |
 | v0.4.3.1 | ✅ | 修 sync-over-async 死锁 |
 | v0.5 | ✅ | Routing Decoupled — 删 Proxifier 假装集成，改名 Clash Verge / v2ray，Copy Rule Hint |
-| v0.6 | 📋 | ProxiFyre transparent per-app backend（generic app 真路由） |
+| v0.6 | ✅ | ProxiFyre transparent per-app backend（generic app 真路由） |
 | v0.7 | 📋 | 自动发现应用路径、应用规则预设 |
 | v1.0 | 📋 | 安装包、开机自启 |
 
@@ -101,6 +101,63 @@ v0.5 做了诚实的方向调整：
 - ProxySwitch 只做 launcher + monitor + Copy Rule Hint + Open Routing Config
 
 v0.6 计划用开源的 **ProxiFyre**（Windows packet filter）真做 per-app 透明代理，把 generic app 路由真正抓回 ProxySwitch 管理。
+
+## v0.6 ProxiFyre 集成
+
+v0.6 加入开源的 [ProxiFyre](https://github.com/wiresock/proxifyre) 作为透明 per-app 代理后端。**真控制 generic app 的路由**——不再"假装"。
+
+### 工作原理
+
+```
+拖 Obsidian.exe 到 Clash Verge 10708 zone
+  ↓
+ProxySwitch 把 Obsidian.exe 加进 backend/proxifyre/app-config.json 的路由表
+  ↓
+ProxySwitch 写文件（atomic + .bak）
+  ↓
+ProxiFyre.exe（独立运行的 Windows service / 进程）读取 config
+  ↓
+所有 Obsidian.exe 发出的 TCP/UDP 流量被 NDISAPI 重定向到 127.0.0.1:10708
+  ↓
+Clash Verge 看到 SOCKS5 连接 → 应用它的规则路由到出口
+```
+
+### 首次配置步骤
+
+1. 下载 ProxiFyre release（已自动下载到 `E:\proxyswitch\backend\proxifyre\`）
+2. 安装 **Windows Packet Filter driver**（[wiresock 官方下载](https://github.com/wiresock/ndisapi/releases)）—— 这是 ProxiFyre 的硬依赖
+3. 以管理员身份注册 ProxiFyre 为 Windows Service：
+   ```powershell
+   cd E:\proxyswitch\backend\proxifyre
+   .\ProxiFyre.exe install
+   .\ProxiFyre.exe start
+   ```
+4. 打开 ProxySwitch → Settings → Transparent Backend tab，勾选 `Enabled`
+5. Dashboard 底部 `Backend` 行应显示 `ProxiFyre: running`
+
+### 使用流程
+
+| 场景 | RoutingStatus | 含义 |
+|---|---|---|
+| 浏览器走 `--proxy-server` | `Browser proxy` | ProxySwitch 控制（启动参数） |
+| Generic app + 10708 zone（ProxiFyre enabled） | `ProxiFyre active` | ProxiFyre 路由到 Clash Verge |
+| Generic app + 10708 zone（ProxiFyre pending） | `ProxiFyre pending` | config 已写但 service 未重启 |
+| Generic app + 10708 zone（ProxiFyre failed） | `ProxiFyre failed` | 写 config 失败或 backend 不可用 |
+| Generic app + 10708 zone（ProxiFyre disabled） | `External router` | 走 v0.5 Copy Rule Hint 路径 |
+| 任何 direct intent | `Direct` | 不路由 |
+
+### 子进程 / Launcher Handoff
+
+如果 Steam / Epic 类 launcher 启动后产生 child process，Dashboard 上的 session card 会显示 `Route Child` 按钮。点击后 ProxySwitch 把 child.exe 也加入 ProxiFyre 路由表 + 重写 config。
+
+⚠ ProxiFyre 路由是 **基于 exe 名/路径** 的，不是 PID 隔离的。其他地方启动同名 exe 也会被路由。
+
+### 不会自动做的事
+
+- ProxySwitch **不**自动装 Windows Packet Filter driver
+- ProxySwitch **不**自动注册 ProxiFyre 为 service
+- ProxySwitch **不**自动以管理员重启 service（除非用户勾 `manageService`）
+- 这些都要用户主动操作，避免静默改系统
 | v0.6 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
 | v1.0 | 📋 | 安装包、开机自启 |
 

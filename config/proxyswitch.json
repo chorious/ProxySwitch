@@ -95,5 +95,15 @@
         "github.com"
       ]
     }
-  ]
+  ],
+  "transparentBackend": {
+    "type": "proxifyre",
+    "enabled": false,
+    "exe": "E:\\proxyswitch\\backend\\proxifyre\\ProxiFyre.exe",
+    "configPath": "E:\\proxyswitch\\backend\\proxifyre\\app-config.json",
+    "serviceName": "ProxiFyre",
+    "manageService": false,
+    "autoRestartOnConfigChange": false
+  },
+  "appRoutes": []
 }

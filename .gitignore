@@ -16,6 +16,7 @@ profiles/
 logs/
 plan&review/
 test_tools/
+backend/
 
 # App leak files (pre-v0.3.2 CWD bug residue)
 launcher.log

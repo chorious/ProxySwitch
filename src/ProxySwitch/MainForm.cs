@@ -17,6 +17,7 @@ public class MainForm : Form
     private EventStore _events = null!;
     private ProcessMonitor _processMonitor = null!;
     private SessionManager _sessionManager = null!;
+    private ProxiFyreBackend? _backend;
     private DashboardForm? _dashboard;
 
     public static readonly string RootPath = @"E:\proxyswitch";
@@ -28,7 +29,7 @@ public class MainForm : Form
         SetupServices();
         BuildMenu();
         _tray.Visible = true;
-        Logger.Info("ProxySwitch v0.5 started");
+        Logger.Info("ProxySwitch v0.6 started");
     }
 
     private void InitializeComponent()
@@ -82,7 +83,8 @@ public class MainForm : Form
 
         _launcher = new AppLauncher(_config);
         _processMonitor = new ProcessMonitor();
-        _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config);
+        _backend = new ProxiFyreBackend(_config, _events);
+        _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend);
 
         _monitor.Start();
         _monitor.StartPolling();
@@ -163,7 +165,7 @@ public class MainForm : Form
     {
         if (_dashboard == null || _dashboard.IsDisposed)
         {
-            _dashboard = new DashboardForm(_config, _monitor, _sessionManager, _events, _launcher);
+            _dashboard = new DashboardForm(_config, _monitor, _sessionManager, _events, _launcher, _backend);
             _dashboard.FormClosed += (_, _) => _dashboard = null;
             _dashboard.Show();
         }

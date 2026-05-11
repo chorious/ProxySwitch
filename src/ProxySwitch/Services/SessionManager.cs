@@ -12,16 +12,18 @@ public sealed class SessionManager : IDisposable
     private readonly EventStore _events;
     private readonly HandoffScorer _scorer;
     private readonly ProxyConfig _config;
+    private readonly ProxiFyreBackend? _backend;
 
     public event Action? SessionsChanged;
     public event Action<LaunchSession, List<HandoffCandidate>>? CorrelatedCandidatesFound;
 
-    public SessionManager(AppLauncher launcher, ProcessMonitor monitor, EventStore events, ProxyConfig config)
+    public SessionManager(AppLauncher launcher, ProcessMonitor monitor, EventStore events, ProxyConfig config, ProxiFyreBackend? backend = null)
     {
         _launcher = launcher;
         _processMonitor = monitor;
         _events = events;
         _config = config;
+        _backend = backend;
         _scorer = new HandoffScorer();
     }
 
@@ -139,6 +141,10 @@ public sealed class SessionManager : IDisposable
         var baseline = _processMonitor.CaptureProcessSnapshots();
         var baselineTask = Task.FromResult(baseline);
 
+        // Ensure ProxiFyre route BEFORE launch so the new process is matched.
+        // Returns the routing label that should appear on the session card.
+        string routingStatus = ResolveInitialRoutingStatus(exePath, mode, proxyId);
+
         var result = _launcher.LaunchGeneric(exePath);
 
         if (!result.Success)
@@ -151,11 +157,7 @@ public sealed class SessionManager : IDisposable
             ? (ProcessMonitor.GetProcessStartTime(result.ProcessId.Value) ?? DateTime.Now)
             : DateTime.Now;
 
-        // Routing semantics under v0.5: ProxySwitch never claims to verify generic routing.
-        // direct intent → "direct"
-        // proxy intent → "external-routing-required" (Clash Verge / v2ray decides)
-        var routingStatus = mode == "direct" ? "direct" : "external-routing-required";
-
+        // routingStatus was decided before launch (depends on backend availability)
         var session = new LaunchSession
         {
             Name = name,
@@ -434,6 +436,86 @@ public sealed class SessionManager : IDisposable
     {
         _events.Add("CorrelatedHandoffIgnored", $"{session.Name}: user ignored correlated candidates");
         FinalizeAsExited(session, "user ignored correlated candidates");
+    }
+
+    /// <summary>
+    /// Decide what RoutingStatus the session should start with based on mode and
+    /// whether the ProxiFyre backend is configured and able to write a route.
+    /// </summary>
+    private string ResolveInitialRoutingStatus(string exePath, string mode, string? proxyId)
+    {
+        if (mode == "direct" || string.IsNullOrEmpty(proxyId))
+            return "direct";
+
+        // No backend configured → fall back to v0.5 "external router" semantics
+        if (_backend == null || !_config.TransparentBackend.Enabled || _config.TransparentBackend.Type != "proxifyre")
+            return "external-routing-required";
+
+        var status = _backend.GetStatus();
+        if (status.State is "not-configured" or "exe-missing")
+        {
+            _events.Add("BackendNotReady", $"ProxiFyre backend not ready: {status.Message}");
+            return "external-routing-required";
+        }
+
+        // Add the app to ProxiFyre route list and write config.
+        try
+        {
+            _backend.EnsureRoute(exePath, proxyId, source: "drop-zone");
+            var apply = _backend.Apply(restartService: _config.TransparentBackend.AutoRestartOnConfigChange);
+            if (apply.Success)
+            {
+                return _config.TransparentBackend.ManageService && apply.ServiceRestarted
+                    ? "proxifyre-route-active"
+                    : "proxifyre-route-pending";  // config written but service may need manual restart
+            }
+            _events.Add("BackendApplyFailed", apply.Reason ?? "unknown");
+            return "proxifyre-route-failed";
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"ResolveInitialRoutingStatus failed for {exePath}: {ex.Message}");
+            _events.Add("BackendApplyFailed", ex.Message);
+            return "proxifyre-route-failed";
+        }
+    }
+
+    /// <summary>
+    /// Add a child / correlated exe to the ProxiFyre route for the session's proxy.
+    /// Returns the new RoutingStatus to display.
+    /// </summary>
+    public string RouteDetectedChild(LaunchSession session)
+    {
+        if (_backend == null || !_config.TransparentBackend.Enabled || _config.TransparentBackend.Type != "proxifyre")
+            return session.RoutingStatus;
+        if (string.IsNullOrEmpty(session.ProxyId)) return session.RoutingStatus;
+
+        var liveChild = session.Processes.FirstOrDefault(p =>
+            p.ExitedAt == null && (p.Role == "descendant" || p.Role == "correlated"));
+        if (liveChild == null || string.IsNullOrEmpty(liveChild.ExecutablePath))
+            return session.RoutingStatus;
+
+        try
+        {
+            _backend.EnsureRoute(liveChild.ExecutablePath, session.ProxyId, source: "child-detected");
+            var apply = _backend.Apply(restartService: _config.TransparentBackend.AutoRestartOnConfigChange);
+            session.RoutingStatus = apply.Success
+                ? (_config.TransparentBackend.ManageService && apply.ServiceRestarted
+                    ? "proxifyre-route-active"
+                    : "proxifyre-route-pending")
+                : "proxifyre-route-failed";
+            _events.Add("ChildRouteAdded", $"{session.Name}: routed {liveChild.Name} via {session.ProxyId}");
+            SessionsChanged?.Invoke();
+            return session.RoutingStatus;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"RouteDetectedChild failed: {ex.Message}");
+            _events.Add("BackendApplyFailed", ex.Message);
+            session.RoutingStatus = "proxifyre-route-failed";
+            SessionsChanged?.Invoke();
+            return session.RoutingStatus;
+        }
     }
 
     public void StopSession(LaunchSession session)

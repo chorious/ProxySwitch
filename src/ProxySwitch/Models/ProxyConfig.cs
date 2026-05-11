@@ -28,6 +28,22 @@ public class ProxyConfig
     /// </summary>
     [JsonPropertyName("ruleHintPresets")]
     public List<RuleHintPreset> RuleHintPresets { get; set; } = [];
+
+    /// <summary>
+    /// Optional transparent per-app routing backend (e.g. ProxiFyre).
+    /// When configured, generic apps dropped into proxy lanes get a real
+    /// routing rule written to the backend; without it, ProxySwitch falls
+    /// back to v0.5 "external routing required" intent only.
+    /// </summary>
+    [JsonPropertyName("transparentBackend")]
+    public TransparentBackendConfig TransparentBackend { get; set; } = new();
+
+    /// <summary>
+    /// Per-app routing rules ProxySwitch maintains, regenerated into the
+    /// transparent backend's config on each change.
+    /// </summary>
+    [JsonPropertyName("appRoutes")]
+    public List<AppRoute> AppRoutes { get; set; } = [];
 }
 
 public class ProxyInfo
@@ -124,4 +140,65 @@ public class RuleHintPreset
 
     [JsonPropertyName("domainSuffixes")]
     public List<string> DomainSuffixes { get; set; } = [];
+}
+
+public class TransparentBackendConfig
+{
+    /// <summary>"none" or "proxifyre".</summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "none";
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    /// <summary>Path to ProxiFyre.exe.</summary>
+    [JsonPropertyName("exe")]
+    public string Exe { get; set; } = "";
+
+    /// <summary>Path to app-config.json that ProxiFyre reads on startup.</summary>
+    [JsonPropertyName("configPath")]
+    public string ConfigPath { get; set; } = "";
+
+    /// <summary>Windows service name (Topshelf default is "ProxiFyre").</summary>
+    [JsonPropertyName("serviceName")]
+    public string ServiceName { get; set; } = "ProxiFyre";
+
+    /// <summary>
+    /// If true, ProxySwitch will call ProxiFyre.exe install/start/stop and use
+    /// sc.exe / Service Controller APIs. Default false — user manages the
+    /// service manually for safety.
+    /// </summary>
+    [JsonPropertyName("manageService")]
+    public bool ManageService { get; set; }
+
+    /// <summary>If true, restart backend after every config write.</summary>
+    [JsonPropertyName("autoRestartOnConfigChange")]
+    public bool AutoRestartOnConfigChange { get; set; }
+}
+
+public class AppRoute
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    /// <summary>Full path to the executable when known (preferred match).</summary>
+    [JsonPropertyName("exePath")]
+    public string ExePath { get; set; } = "";
+
+    /// <summary>Fallback short name (e.g. "Obsidian.exe") when full path is not stable.</summary>
+    [JsonPropertyName("processName")]
+    public string ProcessName { get; set; } = "";
+
+    [JsonPropertyName("proxyId")]
+    public string ProxyId { get; set; } = "";
+
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>"drop-zone" / "pinned" / "child-detected" / "user".</summary>
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = "user";
 }
