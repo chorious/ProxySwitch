@@ -486,6 +486,87 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
+    /// External launch attach: an app matching a persistent AppRoute started
+    /// outside of ProxySwitch (Start Menu / shortcut / another tool). We
+    /// surface it on the Dashboard so the user can see ProxyFyre is routing it.
+    /// We do NOT call EnsureRoute or Apply — the persistent route is already
+    /// in app-config.json, and ProxiFyre is matching it (assuming the service
+    /// is running). Returns true if a new session was attached, false if the
+    /// PID is already tracked or no matching route was found.
+    /// </summary>
+    public bool AttachExternalLaunch(ExternalProcessHit hit)
+    {
+        // Skip apps ProxySwitch itself just launched. Two checks: PPID against
+        // our own PID (covers Process.Start), and PID against tracked sessions.
+        var myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+        if (hit.ParentProcessId == myPid) return false;
+
+        lock (_sessions)
+        {
+            if (_sessions.Any(s => s.RootProcessId == hit.ProcessId
+                                || s.Processes.Any(p => p.ProcessId == hit.ProcessId)))
+                return false;
+        }
+
+        // Find which persistent AppRoute caused the match. We can't trust
+        // ExePath alone (rare apps don't expose it via WMI); fall back to Name.
+        var route = _config.AppRoutes.FirstOrDefault(r =>
+            r.IsPersistent && r.Enabled &&
+            ((!string.IsNullOrEmpty(hit.ExecutablePath) && string.Equals(r.ExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+             || (!string.IsNullOrEmpty(hit.Name) && string.Equals(r.ProcessName, hit.Name, StringComparison.OrdinalIgnoreCase))));
+        if (route == null) return false;
+
+        var rootCreatedAt = ProcessMonitor.GetProcessStartTime(hit.ProcessId) ?? DateTime.Now;
+
+        var session = new LaunchSession
+        {
+            Name = $"{hit.Name} (external)",
+            ExePath = string.IsNullOrEmpty(hit.ExecutablePath) ? hit.Name : hit.ExecutablePath,
+            Kind = "external",
+            Mode = "proxy",
+            ProxyId = route.ProxyId,
+            RootProcessId = hit.ProcessId,
+            RootCreatedAt = rootCreatedAt,
+            Status = "running",
+            // Persistent route exists in app-config.json + service is running → presumed active.
+            // If ProxiFyre is stopped, the route is just not actually intercepting; we don't
+            // claim active in that case.
+            RoutingStatus = ResolveExternalRoutingStatus()
+        };
+        session.Processes.Add(new TrackedProcess
+        {
+            ProcessId = hit.ProcessId,
+            ParentProcessId = hit.ParentProcessId,
+            Name = hit.Name,
+            ExecutablePath = hit.ExecutablePath,
+            Role = "root",
+            CreatedAt = rootCreatedAt
+        });
+
+        lock (_sessions) _sessions.Add(session);
+        var cts = new CancellationTokenSource();
+        lock (_sessionCts) _sessionCts[session.Id] = cts;
+        _events.Add("ExternalProcessAttached", $"{hit.Name} (PID={hit.ProcessId}) matched persistent route '{route.Name}'");
+        SessionsChanged?.Invoke();
+
+        // Track exit
+        _processMonitor.TrackPid(hit.ProcessId, () =>
+        {
+            MarkProcessExited(session, hit.ProcessId);
+            FinalizeAsExited(session, "external process exited");
+        });
+
+        return true;
+    }
+
+    private string ResolveExternalRoutingStatus()
+    {
+        if (_backend == null) return "external-routing-required";
+        var st = _backend.GetStatus();
+        return st.State == "running" ? "proxifyre-route-active" : "proxifyre-route-needs-restart";
+    }
+
+    /// <summary>
     /// Decide what RoutingStatus the session should start with based on mode and
     /// whether the ProxiFyre backend is configured and able to write a route.
     /// </summary>

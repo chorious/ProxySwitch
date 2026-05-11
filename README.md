@@ -83,7 +83,8 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.6.2 | ✅ | 拖 app 时 ProxySwitch 自动弹 UAC 重启 ProxiFyre（不再手动 PowerShell） |
 | v0.6.3 | ✅ | tmp/set 分层 / persistent route 持久化 / Dashboard 加 Restart 按钮 |
 | v0.6.4 | ✅ | Hot reload Settings / Drop 异步 / tmp 生命周期 / Launch rollback / AppRoutes tab / Service name 校验 |
-| v0.7 | 📋 | 自动发现应用路径、应用规则预设 |
+| v0.7 | ✅ | External Process Watcher — persistent route 的 exe 从外部启动也自动建 session card |
+| v0.8 | 📋 | 自动发现应用路径、应用规则预设 |
 | v1.0 | 📋 | 安装包、开机自启 |
 
 ## v0.5 重要方向调整：Routing Decoupled

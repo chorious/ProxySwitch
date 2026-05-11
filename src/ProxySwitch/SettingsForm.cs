@@ -128,7 +128,7 @@ public class SettingsForm : Form
         _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", Width = 120 });
         _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy", Width = 70 });
         _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", HeaderText = "Enabled", Width = 60 });
-        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 60 });
+        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 60, ReadOnly = true });
         _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", Width = 110, ReadOnly = true });
         routesTab.Controls.Add(_routeGrid);
         tabs.TabPages.Add(routesTab);

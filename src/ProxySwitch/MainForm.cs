@@ -18,6 +18,7 @@ public class MainForm : Form
     private ProcessMonitor _processMonitor = null!;
     private SessionManager _sessionManager = null!;
     private ProxiFyreBackend? _backend;
+    private ExternalProcessWatcher? _externalWatcher;
     private DashboardForm? _dashboard;
 
     public static readonly string RootPath = @"E:\proxyswitch";
@@ -106,6 +107,15 @@ public class MainForm : Form
 
         _monitor.Start();
         _monitor.StartPolling();
+
+        // Start watching for external app starts that match persistent routes.
+        _externalWatcher = new ExternalProcessWatcher(_config, _events);
+        _externalWatcher.ProcessDetected += hit =>
+        {
+            try { _sessionManager.AttachExternalLaunch(hit); }
+            catch (Exception ex) { Logger.Error($"AttachExternalLaunch failed: {ex.Message}"); }
+        };
+        _externalWatcher.Start();
     }
 
     /// <summary>
@@ -119,9 +129,11 @@ public class MainForm : Form
         try { _monitor?.Dispose(); } catch { }
         try { _processMonitor?.Dispose(); } catch { }
         try { _sessionManager?.Dispose(); } catch { }
+        try { _externalWatcher?.Dispose(); } catch { }
         _monitor = null!;
         _processMonitor = null!;
         _sessionManager = null!;
+        _externalWatcher = null;
         _launcher = null!;
         _backend = null;
     }
@@ -320,6 +332,7 @@ public class MainForm : Form
         _monitor?.Dispose();
         _processMonitor?.Dispose();
         _sessionManager?.Dispose();
+        _externalWatcher?.Dispose();
         _tray?.Dispose();
         base.OnFormClosing(e);
     }
