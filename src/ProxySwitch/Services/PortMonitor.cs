@@ -1,26 +1,28 @@
+using System.Diagnostics;
 using System.Net.Sockets;
+using ProxySwitch.Models;
 
 namespace ProxySwitch.Services;
 
 public class PortMonitor : IDisposable
 {
     private readonly System.Windows.Forms.Timer _timer;
-    private readonly Dictionary<string, bool> _status = new();
-    private readonly List<(string Host, int Port)> _targets = new();
+    private readonly Dictionary<string, ProxyRuntimeStatus> _status = new();
+    private readonly List<(string Host, int Port, string Id)> _targets = new();
 
     public event Action? StatusChanged;
 
     public PortMonitor()
     {
-        _timer = new System.Windows.Forms.Timer { Interval = 5000 };
+        _timer = new System.Windows.Forms.Timer { Interval = 30000 };
         _timer.Tick += async (_, _) => await CheckAllAsync();
     }
 
-    public void AddTarget(string host, int port)
+    public void AddTarget(string host, int port, string id)
     {
         var key = $"{host}:{port}";
-        _targets.Add((host, port));
-        _status[key] = false;
+        _targets.Add((host, port, id));
+        _status[key] = new ProxyRuntimeStatus { Id = id, Status = "unknown" };
     }
 
     public void Start()
@@ -31,38 +33,69 @@ public class PortMonitor : IDisposable
     public void StartPolling() => _timer.Start();
     public void StopPolling() => _timer.Stop();
 
+    public void ManualRefresh()
+    {
+        _ = CheckAllAsync();
+    }
+
+    public ProxyRuntimeStatus? GetStatus(string host, int port)
+    {
+        var key = $"{host}:{port}";
+        return _status.TryGetValue(key, out var s) ? s : null;
+    }
+
     public bool IsOnline(string host, int port)
     {
         var key = $"{host}:{port}";
-        return _status.TryGetValue(key, out var v) && v;
+        return _status.TryGetValue(key, out var s) && s.Status == "online";
+    }
+
+    public int? GetLatency(string host, int port)
+    {
+        var key = $"{host}:{port}";
+        return _status.TryGetValue(key, out var s) ? s.LatencyMs : null;
     }
 
     private async Task CheckAllAsync()
     {
         bool anyChanged = false;
-        foreach (var (host, port) in _targets)
+        foreach (var (host, port, id) in _targets)
         {
             var key = $"{host}:{port}";
-            bool was = _status.TryGetValue(key, out var v) && v;
-            bool now = await CheckAsync(host, port);
-            if (was != now) anyChanged = true;
-            _status[key] = now;
+            var wasOnline = _status.TryGetValue(key, out var prev) && prev.Status == "online";
+            var (nowOnline, latencyMs) = await CheckAsync(host, port);
+
+            var status = _status[key];
+            status.Id = id;
+            status.LastCheckedAt = DateTime.Now;
+            status.LatencyMs = latencyMs;
+
+            var newStatus = nowOnline ? "online" : "offline";
+            if (status.Status != newStatus)
+            {
+                status.Status = newStatus;
+                status.LastChangedAt = DateTime.Now;
+                anyChanged = true;
+            }
         }
         if (anyChanged) StatusChanged?.Invoke();
     }
 
-    private static async Task<bool> CheckAsync(string host, int port)
+    private static async Task<(bool, int?)> CheckAsync(string host, int port)
     {
+        var sw = Stopwatch.StartNew();
         try
         {
             using var client = new TcpClient();
             using var cts = new CancellationTokenSource(1000);
             await client.ConnectAsync(host, port, cts.Token);
-            return client.Connected;
+            sw.Stop();
+            return (client.Connected, (int)sw.ElapsedMilliseconds);
         }
         catch
         {
-            return false;
+            sw.Stop();
+            return (false, null);
         }
     }
 

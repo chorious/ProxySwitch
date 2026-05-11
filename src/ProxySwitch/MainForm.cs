@@ -10,15 +10,14 @@ public class MainForm : Form
 {
     private NotifyIcon _tray = null!;
     private ContextMenuStrip _menu = null!;
-    private ToolStripMenuItem _statusItem = null!;
-    private ToolStripMenuItem _launchItem = null!;
-    private ToolStripMenuItem _profileItem = null!;
-    private ToolStripMenuItem _p10708Item = null!;
-    private ToolStripMenuItem _p10808Item = null!;
 
     private ProxyConfig _config = new();
     private PortMonitor _monitor = null!;
     private AppLauncher _launcher = null!;
+    private EventStore _events = null!;
+    private ProcessMonitor _processMonitor = null!;
+    private SessionManager _sessionManager = null!;
+    private DashboardForm? _dashboard;
 
     public static readonly string RootPath = @"E:\proxyswitch";
 
@@ -26,10 +25,10 @@ public class MainForm : Form
     {
         InitializeComponent();
         LoadConfig();
-        SetupMonitor();
+        SetupServices();
         BuildMenu();
         _tray.Visible = true;
-        Logger.Info("ProxySwitch tray visible");
+        Logger.Info("ProxySwitch v0.3 started");
     }
 
     private void InitializeComponent()
@@ -48,6 +47,10 @@ public class MainForm : Form
             Text = "ProxySwitch",
             Visible = false
         };
+        _tray.MouseDoubleClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left) ShowDashboard();
+        };
     }
 
     private void LoadConfig()
@@ -57,7 +60,7 @@ public class MainForm : Form
         {
             var json = File.ReadAllText(path);
             _config = JsonSerializer.Deserialize<ProxyConfig>(json) ?? new ProxyConfig();
-            Logger.Info($"Config loaded from {path}, proxies={_config.Proxies.Count}, apps={_config.Apps.Count}");
+            Logger.Info($"Config loaded, proxies={_config.Proxies.Count}, apps={_config.Apps.Count}");
         }
         catch (Exception ex)
         {
@@ -66,15 +69,20 @@ public class MainForm : Form
         }
     }
 
-    private void SetupMonitor()
+    private void SetupServices()
     {
+        _events = new EventStore();
         _monitor = new PortMonitor();
         _monitor.StatusChanged += OnStatusChanged;
 
         foreach (var proxy in _config.Proxies)
         {
-            _monitor.AddTarget(proxy.Host, proxy.Port);
+            _monitor.AddTarget(proxy.Host, proxy.Port, proxy.Id);
         }
+
+        _launcher = new AppLauncher(_config);
+        _processMonitor = new ProcessMonitor();
+        _sessionManager = new SessionManager(_launcher, _processMonitor, _events);
 
         _monitor.Start();
         _monitor.StartPolling();
@@ -87,7 +95,6 @@ public class MainForm : Form
             Invoke(OnStatusChanged);
             return;
         }
-        UpdateStatusLabels();
         UpdateTrayIcon();
     }
 
@@ -95,105 +102,84 @@ public class MainForm : Form
     {
         _menu = new ContextMenuStrip();
 
-        // Status
-        _statusItem = new ToolStripMenuItem("Status") { Enabled = false };
-        _p10708Item = new ToolStripMenuItem("10708: Checking...") { Enabled = false };
-        _p10808Item = new ToolStripMenuItem("10808: Checking...") { Enabled = false };
-        _statusItem.DropDownItems.Add(_p10708Item);
-        _statusItem.DropDownItems.Add(_p10808Item);
-        _menu.Items.Add(_statusItem);
+        // Open Dashboard
+        _menu.Items.Add("Open Dashboard", null, (_, _) => ShowDashboard());
         _menu.Items.Add(new ToolStripSeparator());
 
-        // Launch
-        _launchItem = new ToolStripMenuItem("Launch");
-        foreach (var app in _config.Apps)
+        // Quick Launch (pinned apps)
+        if (_config.Apps.Count > 0)
         {
-            var item = new ToolStripMenuItem(app.Name, null, (_, _) => _launcher.LaunchBrowser(app));
-            _launchItem.DropDownItems.Add(item);
+            var quick = new ToolStripMenuItem("Quick Launch");
+            foreach (var app in _config.Apps)
+            {
+                var a = app;
+                quick.DropDownItems.Add(a.Name, null, (_, _) => _sessionManager.LaunchBrowser(a, a.Mode, a.ProxyId));
+            }
+            _menu.Items.Add(quick);
+            _menu.Items.Add(new ToolStripSeparator());
         }
-        _menu.Items.Add(_launchItem);
+
+        // Proxy Status
+        var statusItem = new ToolStripMenuItem("Proxy Status") { Enabled = false };
+        foreach (var proxy in _config.Proxies)
+        {
+            var s = _monitor.GetStatus(proxy.Host, proxy.Port);
+            var latency = s?.LatencyMs.HasValue == true ? $"{s.LatencyMs}ms" : "timeout";
+            var text = $"{proxy.Name}: {(s?.Status ?? "unknown")} ({latency})";
+            statusItem.DropDownItems.Add(text, null, null);
+        }
+        _menu.Items.Add(statusItem);
         _menu.Items.Add(new ToolStripSeparator());
 
         // Proxifier Profile
-        _profileItem = new ToolStripMenuItem("Proxifier Profile");
         if (_config.Proxifier.Enabled && _config.Proxifier.Profiles.Count > 0)
         {
-            // Recent profile
+            var prof = new ToolStripMenuItem("Proxifier Profile");
             if (!string.IsNullOrEmpty(_config.LastProfile) &&
                 _config.Proxifier.Profiles.ContainsKey(_config.LastProfile))
             {
-                var recentName = _config.LastProfile switch
-                {
-                    "direct" => "Direct",
-                    "all10708" => "All via 10708",
-                    "all10808" => "All via 10808",
-                    "mixed" => "Mixed Rules",
-                    _ => _config.LastProfile
-                };
-                var recentItem = new ToolStripMenuItem($"Reload Last: {recentName}", null,
+                prof.DropDownItems.Add($"Reload Last: {_config.LastProfile}", null,
                     (_, _) => LoadProfile(_config.LastProfile!));
-                _profileItem.DropDownItems.Add(recentItem);
-                _profileItem.DropDownItems.Add(new ToolStripSeparator());
+                prof.DropDownItems.Add(new ToolStripSeparator());
             }
-
             foreach (var kv in _config.Proxifier.Profiles)
             {
-                var name = kv.Key switch
-                {
-                    "direct" => "Direct",
-                    "all10708" => "All via 10708",
-                    "all10808" => "All via 10808",
-                    "mixed" => "Mixed Rules",
-                    _ => kv.Key
-                };
-                var item = new ToolStripMenuItem(name, null, (_, _) => LoadProfile(kv.Key));
-                _profileItem.DropDownItems.Add(item);
+                var name = kv.Key;
+                prof.DropDownItems.Add(name, null, (_, _) => LoadProfile(kv.Key));
             }
-        }
-        else
-        {
-            _profileItem.Enabled = false;
-        }
-        _menu.Items.Add(_profileItem);
-        _menu.Items.Add(new ToolStripSeparator());
-
-        // Open Config
-        _menu.Items.Add("Open Config Folder", null, (_, _) => OpenConfigFolder());
-
-        // Open Proxifier
-        if (_config.Proxifier.Enabled)
-        {
-            _menu.Items.Add("Open Proxifier", null, (_, _) => _launcher.OpenProxifier());
+            _menu.Items.Add(prof);
+            _menu.Items.Add(new ToolStripSeparator());
         }
 
-        // Settings
-        _menu.Items.Add(new ToolStripSeparator());
+        // Tools
+        _menu.Items.Add("Open Proxifier", null, (_, _) => _launcher.OpenProxifier());
         _menu.Items.Add("Settings...", null, (_, _) =>
         {
             using var form = new SettingsForm();
             form.ShowDialog();
-            // Reload config after settings closed
             LoadConfig();
             BuildMenu();
         });
-
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Quit", null, (_, _) => Application.Exit());
 
         _tray.ContextMenuStrip = _menu;
-        _launcher = new AppLauncher(_config);
-        UpdateStatusLabels();
         UpdateTrayIcon();
     }
 
-    private void UpdateStatusLabels()
+    private void ShowDashboard()
     {
-        foreach (var proxy in _config.Proxies)
+        if (_dashboard == null || _dashboard.IsDisposed)
         {
-            bool online = _monitor.IsOnline(proxy.Host, proxy.Port);
-            var label = $"{proxy.Port}: {(online ? "Online" : "Offline")}";
-            if (proxy.Port == 10708) _p10708Item.Text = label;
-            if (proxy.Port == 10808) _p10808Item.Text = label;
+            _dashboard = new DashboardForm(_config, _monitor, _sessionManager, _events, _launcher);
+            _dashboard.FormClosed += (_, _) => _dashboard = null;
+            _dashboard.Show();
+        }
+        else
+        {
+            _dashboard.WindowState = FormWindowState.Normal;
+            _dashboard.BringToFront();
+            _dashboard.Activate();
         }
     }
 
@@ -206,10 +192,10 @@ public class MainForm : Form
 
         Color color = (p10708, p10808) switch
         {
-            (true, true) => Color.FromArgb(34, 197, 94),   // green
-            (true, false) => Color.FromArgb(34, 197, 94),  // green
-            (false, true) => Color.FromArgb(59, 130, 246), // blue
-            _ => Color.FromArgb(156, 163, 175)             // gray
+            (true, true) => Color.FromArgb(34, 197, 94),
+            (true, false) => Color.FromArgb(34, 197, 94),
+            (false, true) => Color.FromArgb(59, 130, 246),
+            _ => Color.FromArgb(156, 163, 175)
         };
 
         _tray.Icon?.Dispose();
@@ -230,30 +216,16 @@ public class MainForm : Form
         return Icon.FromHandle(hIcon);
     }
 
-    private static void OpenConfigFolder()
-    {
-        var path = Path.Combine(RootPath, "config");
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"\"{path}\"",
-                UseShellExecute = true
-            });
-        }
-        catch { }
-    }
-
     private void LoadProfile(string key)
     {
         _launcher.LoadProxifierProfile(key);
+        _events.Add("ProfileLoaded", $"Loaded profile: {key}");
 
         if (_config.LastProfile != key)
         {
             _config.LastProfile = key;
             SaveConfig();
-            BuildMenu(); // refresh to show recent
+            BuildMenu();
         }
     }
 
@@ -270,17 +242,18 @@ public class MainForm : Form
         {
             var json = JsonSerializer.Serialize(_config, options);
             File.WriteAllText(path, json);
-            Logger.Info($"LastProfile updated: {_config.LastProfile}");
         }
         catch (Exception ex)
         {
-            Logger.Error($"Save lastProfile failed: {ex.Message}");
+            Logger.Error($"Save config failed: {ex.Message}");
         }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         _monitor?.Dispose();
+        _processMonitor?.Dispose();
+        _sessionManager?.Dispose();
         _tray?.Dispose();
         base.OnFormClosing(e);
     }

@@ -12,13 +12,13 @@ public class AppLauncher
         _config = config;
     }
 
-    public void LaunchBrowser(AppConfig app)
+    public LaunchResult LaunchBrowser(AppConfig app)
     {
         if (!File.Exists(app.Exe))
         {
-            Logger.Error($"Executable not found: {app.Exe}");
-            MessageBox.Show($"Executable not found:\n{app.Exe}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
+            var err = $"Executable not found: {app.Exe}";
+            Logger.Error(err);
+            return new LaunchResult { Success = false, Error = err };
         }
 
         Directory.CreateDirectory(app.UserDataDir);
@@ -26,18 +26,55 @@ public class AppLauncher
 
         try
         {
-            Process.Start(new ProcessStartInfo
+            var proc = Process.Start(new ProcessStartInfo
             {
                 FileName = app.Exe,
                 Arguments = args,
                 UseShellExecute = true
             });
             Logger.Info($"Launched {app.Name}: {app.Exe} {args}");
+            return new LaunchResult
+            {
+                Success = true,
+                ProcessId = proc?.Id,
+                Arguments = args
+            };
         }
         catch (Exception ex)
         {
             Logger.Error($"Failed to launch {app.Name}: {ex.Message}");
-            MessageBox.Show($"Failed to launch {app.Name}:\n{ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return new LaunchResult { Success = false, Error = ex.Message };
+        }
+    }
+
+    public LaunchResult LaunchGeneric(string exePath)
+    {
+        if (!File.Exists(exePath))
+        {
+            var err = $"Executable not found: {exePath}";
+            Logger.Error(err);
+            return new LaunchResult { Success = false, Error = err };
+        }
+
+        try
+        {
+            var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = exePath,
+                UseShellExecute = true
+            });
+            Logger.Info($"Launched generic app: {exePath}");
+            return new LaunchResult
+            {
+                Success = true,
+                ProcessId = proc?.Id,
+                Arguments = ""
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Failed to launch {exePath}: {ex.Message}");
+            return new LaunchResult { Success = false, Error = ex.Message };
         }
     }
 
@@ -111,7 +148,6 @@ public class AppLauncher
 
         try
         {
-            // Proxifier command line: Proxifier.exe profile.ppx
             Process.Start(new ProcessStartInfo
             {
                 FileName = _config.Proxifier.Exe,

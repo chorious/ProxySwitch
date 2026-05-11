@@ -24,11 +24,13 @@ Windows 托盘应用，把应用级代理切换从命令行里抽离出来。
 1. 放到 `E:\proxyswitch`（或改源码里的 `RootPath`）
 2. 改 `config/proxyswitch.json` 里的路径和代理端口
 3. 双击 `ProxySwitch.exe`，托盘右下角会出现图标
-4. 右键托盘图标：
-   - **Status**：看 10708 / 10808 是否在线
-   - **Launch**：启动 Chrome / Edge（直连或走代理）
-   - **Proxifier Profile**：加载 Proxifier 规则文件
-   - **Settings...**：图形化编辑配置
+4. **双击托盘图标**打开 Dashboard
+5. Dashboard 里：
+   - **拖放 .exe** 到 Direct / 10708 / 10808 区域直接启动
+   - **Pinned Apps** 一键启动常用应用
+   - **Sessions** 实时看运行状态和进程数
+   - **Events** 看启动、退出、代理状态变化全链路
+6. 右键托盘图标也有 Quick Launch 和 Proxifier Profile
 
 ## 配置
 
@@ -68,8 +70,9 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 |---|---|---|
 | v0.1 | ✅ | 托盘、端口检测、启动浏览器、加载 Proxifier profile |
 | v0.2 | ✅ | 动态托盘图标、GUI 配置页、最近使用记录 |
-| v0.3 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
-| v0.4 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
+| v0.3 | ✅ | Dashboard、Drop Zone、Session Tracking、30s 心跳 |
+| v0.4 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
+| v0.5 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
 | v1.0 | 📋 | 安装包、开机自启 |
 
 ## License
