@@ -384,11 +384,16 @@ public class DashboardForm : Form
             };
             btnPanel.Controls.Add(stopBtn);
 
-            // Route Detected Child — only when backend is up and a live child/correlated proc exists
-            if (_backend != null
+            // Route Child — only when backend is reachable AND not already failed.
+            // proxifyre-route-failed gets a Retry / Copy Hint pair instead.
+            bool backendReachable = _backend != null
                 && _config.TransparentBackend.Enabled
-                && session.RoutingStatus.StartsWith("proxifyre-")
-                && session.Processes.Any(p => p.ExitedAt == null && p.Role != "root"))
+                && session.RoutingStatus is "proxifyre-route-active"
+                                          or "proxifyre-route-pending"
+                                          or "proxifyre-route-needs-restart";
+            bool hasLiveChild = session.Processes.Any(p => p.ExitedAt == null && p.Role != "root");
+
+            if (backendReachable && hasLiveChild)
             {
                 var routeBtn = new Button { Text = "Route Child", AutoSize = true, Height = 24 };
                 routeBtn.Click += (_, _) =>
@@ -405,7 +410,22 @@ public class DashboardForm : Form
                 };
                 btnPanel.Controls.Add(routeBtn);
             }
-            // Copy Rule Hint — fallback when backend is not running ProxySwitch's path
+            // route-failed: offer Retry + Copy Hint as escape hatch
+            else if (session.RoutingStatus == "proxifyre-route-failed")
+            {
+                var retryBtn = new Button { Text = "Retry", AutoSize = true, Height = 24 };
+                retryBtn.Click += (_, _) =>
+                {
+                    if (string.IsNullOrEmpty(session.ProxyId)) return;
+                    // re-run the route through SessionManager to reset RoutingStatus
+                    _sessions.RouteDetectedChild(session);
+                };
+                btnPanel.Controls.Add(retryBtn);
+                var hintBtn2 = new Button { Text = "Copy Rule Hint", AutoSize = true, Height = 24 };
+                hintBtn2.Click += (_, _) => CopyRuleHint(session);
+                btnPanel.Controls.Add(hintBtn2);
+            }
+            // Fallback Copy Rule Hint when backend is not in play
             else if (session.RoutingStatus == "external-routing-required")
             {
                 var hintBtn = new Button { Text = "Copy Rule Hint", AutoSize = true, Height = 24 };
@@ -447,6 +467,7 @@ public class DashboardForm : Form
         "external-routing-required" => "External router",
         "proxifyre-route-active" => "ProxiFyre active",
         "proxifyre-route-pending" => "ProxiFyre pending",
+        "proxifyre-route-needs-restart" => "Restart needed",
         "proxifyre-route-failed" => "ProxiFyre failed",
         _ => session.RoutingStatus
     };
@@ -456,6 +477,7 @@ public class DashboardForm : Form
         "browser-proxy-active" => Color.FromArgb(22, 101, 52),
         "proxifyre-route-active" => Color.FromArgb(22, 101, 52),
         "proxifyre-route-pending" => Color.FromArgb(146, 64, 14),
+        "proxifyre-route-needs-restart" => Color.FromArgb(180, 83, 9),
         "proxifyre-route-failed" => Color.Firebrick,
         "external-routing-required" => Color.FromArgb(146, 64, 14),
         _ => Color.DimGray
@@ -572,6 +594,7 @@ public class DashboardForm : Form
             "proxifyre" => "ProxiFyre",
             _ => "Backend"
         };
+        var shortPath = string.IsNullOrEmpty(s.ConfigPath) ? "" : Path.GetFileName(s.ConfigPath);
         switch (s.State)
         {
             case "disabled":
@@ -586,13 +609,18 @@ public class DashboardForm : Form
                 _backendStatusLabel.Text = $"{prefix}: exe missing — {s.Message}";
                 _backendStatusLabel.ForeColor = Color.Firebrick;
                 break;
+            case "service-not-installed":
+                _backendStatusLabel.Text = $"{prefix}: service not installed (run admin: ProxiFyre.exe install)";
+                _backendStatusLabel.ForeColor = Color.Firebrick;
+                break;
             case "running":
-                _backendStatusLabel.Text = $"{prefix}: running ({(s.ServiceRunning ? "service" : "process")})  Config: {s.ConfigPath}";
+                var mode = _config.TransparentBackend.ManageService ? "managed" : "manual";
+                _backendStatusLabel.Text = $"{prefix}: running — {mode} mode  ({shortPath})";
                 _backendStatusLabel.ForeColor = Color.FromArgb(22, 101, 52);
                 break;
             case "stopped":
-                _backendStatusLabel.Text = $"{prefix}: stopped (config written but not active)  Config: {s.ConfigPath}";
-                _backendStatusLabel.ForeColor = Color.FromArgb(146, 64, 14);
+                _backendStatusLabel.Text = $"{prefix}: stopped — start service for routing to take effect  ({shortPath})";
+                _backendStatusLabel.ForeColor = Color.FromArgb(180, 83, 9);
                 break;
             default:
                 _backendStatusLabel.Text = $"{prefix}: {s.State}";

@@ -82,7 +82,9 @@
       "id": "obsidian-community-plugins",
       "name": "Obsidian Community Plugins",
       "description": "Routes Obsidian and the GitHub-hosted plugin marketplace endpoints.",
-      "applications": ["Obsidian.exe"],
+      "applications": [
+        "Obsidian.exe"
+      ],
       "domains": [
         "plugins.obsidian.md",
         "obsidian.md",
@@ -98,12 +100,12 @@
   ],
   "transparentBackend": {
     "type": "proxifyre",
-    "enabled": false,
+    "enabled": true,
     "exe": "E:\\proxyswitch\\backend\\proxifyre\\ProxiFyre.exe",
     "configPath": "E:\\proxyswitch\\backend\\proxifyre\\app-config.json",
-    "serviceName": "ProxiFyre",
+    "serviceName": "ProxiFyreService",
     "manageService": false,
-    "autoRestartOnConfigChange": false
+    "autoRestartOnConfigChange": true
   },
   "appRoutes": []
 }

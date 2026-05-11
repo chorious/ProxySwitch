@@ -147,6 +147,17 @@ public class MainForm : Form
             _menu.Items.Add(new ToolStripSeparator());
         }
 
+        // Transparent backend (ProxiFyre) — surface file/folder open + status
+        if (_backend != null && _config.TransparentBackend.Enabled && _config.TransparentBackend.Type == "proxifyre")
+        {
+            var prox = new ToolStripMenuItem("ProxiFyre");
+            prox.DropDownItems.Add("Open Config", null, (_, _) => _backend.OpenConfigFile());
+            prox.DropDownItems.Add("Open Logs", null, (_, _) => _backend.OpenLogsFolder());
+            prox.DropDownItems.Add("Open Folder", null, (_, _) => _backend.OpenBackendFolder());
+            _menu.Items.Add(prox);
+            _menu.Items.Add(new ToolStripSeparator());
+        }
+
         _menu.Items.Add("Settings...", null, (_, _) =>
         {
             using var form = new SettingsForm();

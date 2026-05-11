@@ -158,6 +158,23 @@ public class SettingsForm : Form
         _bkAutoRestart = new CheckBox { AutoSize = true, Checked = be.AutoRestartOnConfigChange };
         tLayout.Controls.Add(_bkAutoRestart, 1, 6);
 
+        // Linked enable: Auto restart only makes sense when Manage service is on.
+        void UpdateAutoRestartEnable()
+        {
+            _bkAutoRestart.Enabled = _bkManageService.Checked;
+            if (!_bkManageService.Checked && _bkAutoRestart.Checked)
+            {
+                // Visual hint that this setting is currently inert
+                _bkAutoRestart.Text = "(needs Manage service)";
+            }
+            else
+            {
+                _bkAutoRestart.Text = "";
+            }
+        }
+        _bkManageService.CheckedChanged += (_, _) => UpdateAutoRestartEnable();
+        UpdateAutoRestartEnable();
+
         transparentTab.Controls.Add(tLayout);
 
         var help = new Label

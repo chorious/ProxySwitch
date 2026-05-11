@@ -23,6 +23,8 @@ public class ProxiFyreBackend
 
     /// <summary>
     /// Combined backend status for the Dashboard panel.
+    /// States: "disabled" / "not-configured" / "exe-missing" / "service-not-installed" /
+    ///         "stopped" / "running"
     /// </summary>
     public ProxiFyreStatus GetStatus()
     {
@@ -37,14 +39,38 @@ public class ProxiFyreBackend
         if (string.IsNullOrEmpty(be.ConfigPath))
             return new ProxiFyreStatus { State = "not-configured", Message = "config path not set" };
 
-        bool processRunning = IsProcessRunning();
+        // Probe service existence — ServiceController ctor does NOT throw on missing service,
+        // but reading Status will throw InvalidOperationException.
+        bool serviceInstalled = false;
         bool serviceRunning = false;
-        try
+        if (!string.IsNullOrEmpty(be.ServiceName))
         {
-            using var sc = new ServiceController(be.ServiceName);
-            serviceRunning = sc.Status == ServiceControllerStatus.Running;
+            try
+            {
+                using var sc = new ServiceController(be.ServiceName);
+                _ = sc.Status; // probe
+                serviceInstalled = true;
+                serviceRunning = sc.Status == ServiceControllerStatus.Running;
+            }
+            catch (InvalidOperationException)
+            {
+                serviceInstalled = false;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"ServiceController probe failed: {ex.Message}");
+            }
         }
-        catch { /* service may not exist */ }
+
+        bool processRunning = IsProcessRunning();
+
+        if (!serviceInstalled && !processRunning)
+            return new ProxiFyreStatus
+            {
+                State = "service-not-installed",
+                Message = $"service '{be.ServiceName}' is not installed (run `{Path.GetFileName(be.Exe)} install` as admin)",
+                ConfigPath = be.ConfigPath
+            };
 
         var state = (processRunning || serviceRunning) ? "running" : "stopped";
         return new ProxiFyreStatus
@@ -53,6 +79,7 @@ public class ProxiFyreBackend
             ConfigPath = be.ConfigPath,
             ServiceRunning = serviceRunning,
             ProcessRunning = processRunning,
+            ServiceInstalled = serviceInstalled,
             ManagedService = be.ManageService
         };
     }
@@ -120,6 +147,7 @@ public class ProxiFyreBackend
 
     /// <summary>
     /// Atomically write the generated config to disk. Returns the final path.
+    /// Creates a timestamped .bak each call, keeping only the 5 most recent.
     /// </summary>
     public string WriteConfig()
     {
@@ -129,12 +157,26 @@ public class ProxiFyreBackend
 
         Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
 
-        // One-time backup of any pre-existing user config.
-        var bak = path + ".bak";
-        if (File.Exists(path) && !File.Exists(bak))
+        // Timestamped backup of any existing config (every write, not just first).
+        if (File.Exists(path))
         {
-            try { File.Copy(path, bak); }
-            catch (Exception ex) { Logger.Error($"Backup failed: {ex.Message}"); }
+            try
+            {
+                var newJson = BuildConfigJson();
+                var existing = File.ReadAllText(path);
+                if (existing != newJson)
+                {
+                    var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                    var bak = $"{path}.{stamp}.bak";
+                    File.Copy(path, bak, overwrite: false);
+                    _events.Add("ProxiFyreConfigBackup", $"saved {Path.GetFileName(bak)}");
+                    PruneOldBackups(path, keep: 5);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Backup failed: {ex.Message}");
+            }
         }
 
         var tmp = path + ".tmp";
@@ -143,6 +185,24 @@ public class ProxiFyreBackend
         _events.Add("ProxiFyreConfigWritten", $"{Path.GetFileName(path)} updated");
         Logger.Info($"ProxiFyre config written: {path}");
         return path;
+    }
+
+    private static void PruneOldBackups(string configPath, int keep)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(configPath);
+            var prefix = Path.GetFileName(configPath) + ".";
+            if (string.IsNullOrEmpty(dir)) return;
+            var baks = Directory.GetFiles(dir, prefix + "*.bak")
+                .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
+                .Skip(keep);
+            foreach (var b in baks)
+            {
+                try { File.Delete(b); } catch { }
+            }
+        }
+        catch { }
     }
 
     /// <summary>
@@ -183,7 +243,9 @@ public class ProxiFyreBackend
 
     /// <summary>
     /// Regenerate config + optionally restart the backend.
-    /// Returns ApplyResult describing what happened.
+    /// If user asks for restart but ManageService is off, the call still succeeds
+    /// (config written) but returns NeedsManualRestart=true so the UI can show
+    /// "needs-restart" rather than falsely claiming "active".
     /// </summary>
     public ApplyResult Apply(bool restartService)
     {
@@ -195,19 +257,31 @@ public class ProxiFyreBackend
         {
             var path = WriteConfig();
 
-            if (restartService && be.ManageService)
+            if (!restartService)
             {
-                if (RestartService())
-                {
-                    _events.Add("ProxiFyreApplied", "config written + service restarted");
-                    return new ApplyResult { Success = true, ConfigPath = path, ServiceRestarted = true };
-                }
-                _events.Add("ProxiFyreApplied", "config written, service restart FAILED");
-                return new ApplyResult { Success = false, ConfigPath = path, Reason = "service restart failed" };
+                _events.Add("ProxiFyreApplied", "config written (restart not requested)");
+                return new ApplyResult { Success = true, ConfigPath = path };
             }
 
-            _events.Add("ProxiFyreApplied", "config written (service not restarted)");
-            return new ApplyResult { Success = true, ConfigPath = path };
+            if (!be.ManageService)
+            {
+                _events.Add("ManualRestartRequired",
+                    $"config written; restart {be.ServiceName} manually to apply changes");
+                return new ApplyResult
+                {
+                    Success = true,
+                    ConfigPath = path,
+                    NeedsManualRestart = true
+                };
+            }
+
+            if (RestartService())
+            {
+                _events.Add("ProxiFyreApplied", "config written + service restarted");
+                return new ApplyResult { Success = true, ConfigPath = path, ServiceRestarted = true };
+            }
+            _events.Add("ProxiFyreApplied", "config written, service restart FAILED");
+            return new ApplyResult { Success = false, ConfigPath = path, Reason = "service restart failed" };
         }
         catch (Exception ex)
         {
@@ -215,6 +289,52 @@ public class ProxiFyreBackend
             Logger.Error($"ProxiFyre apply failed: {ex}");
             return new ApplyResult { Success = false, Reason = ex.Message };
         }
+    }
+
+    /// <summary>Open the generated app-config.json in the default text editor.</summary>
+    public bool OpenConfigFile()
+    {
+        var path = _config.TransparentBackend.ConfigPath;
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return false;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex) { Logger.Error($"OpenConfigFile failed: {ex.Message}"); return false; }
+    }
+
+    /// <summary>Open the ProxiFyre logs directory in Explorer.</summary>
+    public bool OpenLogsFolder()
+    {
+        var exe = _config.TransparentBackend.Exe;
+        if (string.IsNullOrEmpty(exe)) return false;
+        var logsDir = Path.Combine(Path.GetDirectoryName(exe) ?? ".", "logs");
+        if (!Directory.Exists(logsDir))
+        {
+            try { Directory.CreateDirectory(logsDir); } catch { }
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = $"\"{logsDir}\"", UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex) { Logger.Error($"OpenLogsFolder failed: {ex.Message}"); return false; }
+    }
+
+    /// <summary>Open the ProxiFyre install folder in Explorer.</summary>
+    public bool OpenBackendFolder()
+    {
+        var exe = _config.TransparentBackend.Exe;
+        if (string.IsNullOrEmpty(exe)) return false;
+        var dir = Path.GetDirectoryName(exe) ?? ".";
+        if (!Directory.Exists(dir)) return false;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = $"\"{dir}\"", UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex) { Logger.Error($"OpenBackendFolder failed: {ex.Message}"); return false; }
     }
 
     /// <summary>
@@ -283,11 +403,13 @@ public class ProxiFyreBackend
 public class ProxiFyreStatus
 {
     /// <summary>
-    /// "disabled" | "not-configured" | "exe-missing" | "stopped" | "running"
+    /// "disabled" | "not-configured" | "exe-missing" |
+    /// "service-not-installed" | "stopped" | "running"
     /// </summary>
     public string State { get; set; } = "disabled";
     public string? Message { get; set; }
     public string? ConfigPath { get; set; }
+    public bool ServiceInstalled { get; set; }
     public bool ServiceRunning { get; set; }
     public bool ProcessRunning { get; set; }
     public bool ManagedService { get; set; }
@@ -299,4 +421,9 @@ public class ApplyResult
     public string? Reason { get; set; }
     public string? ConfigPath { get; set; }
     public bool ServiceRestarted { get; set; }
+    /// <summary>
+    /// True when caller asked for restart but ManageService is off — config
+    /// was written, user must restart ProxiFyre manually for it to take effect.
+    /// </summary>
+    public bool NeedsManualRestart { get; set; }
 }

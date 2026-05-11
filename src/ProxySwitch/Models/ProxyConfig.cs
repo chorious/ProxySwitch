@@ -159,9 +159,9 @@ public class TransparentBackendConfig
     [JsonPropertyName("configPath")]
     public string ConfigPath { get; set; } = "";
 
-    /// <summary>Windows service name (Topshelf default is "ProxiFyre").</summary>
+    /// <summary>Windows service name. Topshelf default for ProxiFyre 2.2.1 is "ProxiFyreService".</summary>
     [JsonPropertyName("serviceName")]
-    public string ServiceName { get; set; } = "ProxiFyre";
+    public string ServiceName { get; set; } = "ProxiFyreService";
 
     /// <summary>
     /// If true, ProxySwitch will call ProxiFyre.exe install/start/stop and use

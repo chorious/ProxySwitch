@@ -452,25 +452,32 @@ public sealed class SessionManager : IDisposable
             return "external-routing-required";
 
         var status = _backend.GetStatus();
-        if (status.State is "not-configured" or "exe-missing")
+        switch (status.State)
         {
-            _events.Add("BackendNotReady", $"ProxiFyre backend not ready: {status.Message}");
-            return "external-routing-required";
+            case "not-configured":
+            case "exe-missing":
+            case "service-not-installed":
+                _events.Add("BackendNotReady", $"ProxiFyre: {status.State} — {status.Message}");
+                return "external-routing-required";
+            case "stopped":
+                _events.Add("BackendNotReady", $"ProxiFyre service is installed but not running — start it manually");
+                return "external-routing-required";
         }
 
-        // Add the app to ProxiFyre route list and write config.
+        // status.State == "running"
         try
         {
             _backend.EnsureRoute(exePath, proxyId, source: "drop-zone");
             var apply = _backend.Apply(restartService: _config.TransparentBackend.AutoRestartOnConfigChange);
-            if (apply.Success)
+            if (!apply.Success)
             {
-                return _config.TransparentBackend.ManageService && apply.ServiceRestarted
-                    ? "proxifyre-route-active"
-                    : "proxifyre-route-pending";  // config written but service may need manual restart
+                _events.Add("BackendApplyFailed", apply.Reason ?? "unknown");
+                return "proxifyre-route-failed";
             }
-            _events.Add("BackendApplyFailed", apply.Reason ?? "unknown");
-            return "proxifyre-route-failed";
+            if (apply.ServiceRestarted) return "proxifyre-route-active";
+            if (apply.NeedsManualRestart) return "proxifyre-route-needs-restart";
+            // No restart requested → config written but old rules still active in memory
+            return "proxifyre-route-pending";
         }
         catch (Exception ex)
         {
@@ -480,10 +487,6 @@ public sealed class SessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Add a child / correlated exe to the ProxiFyre route for the session's proxy.
-    /// Returns the new RoutingStatus to display.
-    /// </summary>
     public string RouteDetectedChild(LaunchSession session)
     {
         if (_backend == null || !_config.TransparentBackend.Enabled || _config.TransparentBackend.Type != "proxifyre")
@@ -499,11 +502,15 @@ public sealed class SessionManager : IDisposable
         {
             _backend.EnsureRoute(liveChild.ExecutablePath, session.ProxyId, source: "child-detected");
             var apply = _backend.Apply(restartService: _config.TransparentBackend.AutoRestartOnConfigChange);
-            session.RoutingStatus = apply.Success
-                ? (_config.TransparentBackend.ManageService && apply.ServiceRestarted
-                    ? "proxifyre-route-active"
-                    : "proxifyre-route-pending")
-                : "proxifyre-route-failed";
+            if (!apply.Success)
+                session.RoutingStatus = "proxifyre-route-failed";
+            else if (apply.ServiceRestarted)
+                session.RoutingStatus = "proxifyre-route-active";
+            else if (apply.NeedsManualRestart)
+                session.RoutingStatus = "proxifyre-route-needs-restart";
+            else
+                session.RoutingStatus = "proxifyre-route-pending";
+
             _events.Add("ChildRouteAdded", $"{session.Name}: routed {liveChild.Name} via {session.ProxyId}");
             SessionsChanged?.Invoke();
             return session.RoutingStatus;
