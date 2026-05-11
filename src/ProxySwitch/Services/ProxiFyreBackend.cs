@@ -8,7 +8,10 @@ namespace ProxySwitch.Services;
 
 /// <summary>
 /// Generates and applies ProxiFyre's `app-config.json` from ProxySwitch's
-/// internal AppRoute model. Does NOT install drivers, does NOT auto-elevate.
+/// internal AppRoute model. Does NOT install drivers or services. When
+/// AutoRestartOnConfigChange is enabled, it MAY trigger a single UAC prompt
+/// (via `runas` cmd.exe → sc.exe) to restart the configured ProxiFyre service
+/// so a freshly-written config takes effect.
 /// </summary>
 public class ProxiFyreBackend
 {
@@ -209,8 +212,11 @@ public class ProxiFyreBackend
     /// Add or update an AppRoute for the given exe + proxy. Returns true if
     /// the route list actually changed. <paramref name="isPersistent"/> controls
     /// whether the route is also saved to proxyswitch.json for the next startup.
+    /// <paramref name="sessionId"/> binds a tmp route to a specific LaunchSession
+    /// so RemoveTmpRoutesForSession can clean it up later. Ignored when
+    /// isPersistent is true.
     /// </summary>
-    public bool EnsureRoute(string exePath, string proxyId, string source = "drop-zone", bool isPersistent = true)
+    public bool EnsureRoute(string exePath, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null)
     {
         if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(proxyId)) return false;
 
@@ -227,6 +233,13 @@ public class ProxiFyreBackend
             if (isPersistent && !existing.IsPersistent)
             {
                 existing.IsPersistent = true;
+                existing.SessionId = null; // promotion drops the session binding
+                changed = true;
+            }
+            // Tmp route re-dropped by same session: refresh ownership (no-op if already)
+            if (!isPersistent && existing.SessionId != sessionId)
+            {
+                existing.SessionId = sessionId;
                 changed = true;
             }
             if (changed) _events.Add("AppRouteUpdated", $"{procName} -> {proxyId} updated");
@@ -242,7 +255,8 @@ public class ProxiFyreBackend
                 ProxyId = proxyId,
                 Enabled = true,
                 IsPersistent = isPersistent,
-                Source = source
+                Source = source,
+                SessionId = isPersistent ? null : sessionId
             };
             _config.AppRoutes.Add(route);
             _events.Add("AppRouteAdded", $"{procName} -> {proxyId} ({(isPersistent ? "persistent" : "session-only")}, source: {source})");
@@ -257,6 +271,42 @@ public class ProxiFyreBackend
             catch (Exception ex) { Logger.Error($"SaveSwitchConfig after EnsureRoute failed: {ex.Message}"); }
         }
         return changed;
+    }
+
+    /// <summary>
+    /// Remove a single route by exePath + proxyId (used for launch-failure rollback).
+    /// Returns true if a route was actually removed.
+    /// </summary>
+    public bool RemoveRouteByExe(string exePath, string proxyId)
+    {
+        var idx = _config.AppRoutes.FindIndex(r =>
+            string.Equals(r.ExePath, exePath, StringComparison.OrdinalIgnoreCase) &&
+            r.ProxyId == proxyId);
+        if (idx < 0) return false;
+        var r = _config.AppRoutes[idx];
+        _config.AppRoutes.RemoveAt(idx);
+        _events.Add("AppRouteRolledBack", $"{r.Name} (launch failed, route reverted)");
+        if (r.IsPersistent)
+        {
+            try { SaveSwitchConfig(); } catch (Exception ex) { Logger.Error($"SaveSwitchConfig after RemoveRouteByExe failed: {ex.Message}"); }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Remove all tmp routes bound to the given sessionId. Returns true if anything
+    /// was removed. Caller is responsible for rewriting ProxiFyre config (Apply).
+    /// </summary>
+    public bool RemoveTmpRoutesForSession(string sessionId)
+    {
+        if (string.IsNullOrEmpty(sessionId)) return false;
+        var removed = _config.AppRoutes.RemoveAll(r =>
+            !r.IsPersistent && r.SessionId == sessionId);
+        if (removed > 0)
+        {
+            _events.Add("AppRoutesCleanedUp", $"removed {removed} session-only route(s) for session {sessionId}");
+        }
+        return removed > 0;
     }
 
     /// <summary>
@@ -449,6 +499,15 @@ public class ProxiFyreBackend
         var name = _config.TransparentBackend.ServiceName;
         if (string.IsNullOrEmpty(name)) return false;
 
+        // The service name is composed into a shell command line. Reject anything
+        // that could break out — see #5 in GPT review v0.6.3. Windows service
+        // names already disallow `/ \ : * ? " < > |`; tighten further.
+        if (!IsSafeServiceName(name))
+        {
+            _events.Add("ServiceRestartFailed", $"refused to restart: service name '{name}' contains unsafe characters (allowed: A-Z a-z 0-9 _ . -)");
+            return false;
+        }
+
         try
         {
             // sc stop, wait 2s, sc start. Hide window via cmd /c so user doesn't see
@@ -505,6 +564,20 @@ public class ProxiFyreBackend
             _events.Add("ServiceRestartFailed", $"{name}: {ex.Message}");
             return false;
         }
+    }
+
+    private static bool IsSafeServiceName(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name.Length > 256) return false;
+        // Conservative: only ASCII letters, digits, underscore, dot, dash.
+        // Reject everything that could let a malicious service-name field break out
+        // of the cmd.exe quoting (& | < > " % newline ; etc.).
+        foreach (var ch in name)
+        {
+            if (!(char.IsAsciiLetterOrDigit(ch) || ch == '_' || ch == '.' || ch == '-'))
+                return false;
+        }
+        return true;
     }
 
     // ---- ProxiFyre JSON shape (matches their README schema) ----

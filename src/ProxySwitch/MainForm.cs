@@ -72,7 +72,7 @@ public class MainForm : Form
 
     private void SetupServices()
     {
-        _events = new EventStore();
+        _events ??= new EventStore();   // keep EventStore across reloads so history isn't lost
         _monitor = new PortMonitor();
         _monitor.StatusChanged += OnStatusChanged;
 
@@ -106,6 +106,44 @@ public class MainForm : Form
 
         _monitor.Start();
         _monitor.StartPolling();
+    }
+
+    /// <summary>
+    /// Dispose runtime services that hold a reference to the current config snapshot.
+    /// Used when reloading after Settings — services keep references to _config, so
+    /// changing _config alone isn't enough.
+    /// </summary>
+    private void TearDownServices()
+    {
+        try { _monitor?.StopPolling(); } catch { }
+        try { _monitor?.Dispose(); } catch { }
+        try { _processMonitor?.Dispose(); } catch { }
+        try { _sessionManager?.Dispose(); } catch { }
+        _monitor = null!;
+        _processMonitor = null!;
+        _sessionManager = null!;
+        _launcher = null!;
+        _backend = null;
+    }
+
+    /// <summary>
+    /// Hot reload runtime state after Settings save. Closes Dashboard (it captures
+    /// the old service references), tears down monitors/launcher/backend/session
+    /// manager, rebuilds them against the freshly-loaded _config, then rebuilds tray.
+    /// EventStore survives so the user keeps their event history.
+    /// </summary>
+    private void ReloadRuntimeServices()
+    {
+        if (_dashboard != null && !_dashboard.IsDisposed)
+        {
+            try { _dashboard.Close(); } catch { }
+            _dashboard = null;
+        }
+        TearDownServices();
+        LoadConfig();
+        SetupServices();
+        BuildMenu();
+        _events?.Add("RuntimeReloaded", "services rebuilt after settings change");
     }
 
     private void OnStatusChanged()
@@ -195,8 +233,9 @@ public class MainForm : Form
         {
             using var form = new SettingsForm();
             form.ShowDialog();
-            LoadConfig();
-            BuildMenu();
+            // Settings rewrote proxyswitch.json (possibly). Hot-reload all services
+            // and the tray so they use the new config object — see #1 in GPT review v0.6.3.
+            ReloadRuntimeServices();
         });
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Quit", null, (_, _) => Application.Exit());
@@ -256,6 +295,28 @@ public class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // Final cleanup of any tmp routes before disposing services. We don't
+        // restart ProxiFyre here — that would mean a UAC prompt on app close.
+        // Next ProxySwitch startup will WriteConfig with only persistent routes
+        // again, which is when ProxiFyre service can be restarted to fully drop
+        // the in-memory tmp rules. The on-disk file is clean immediately.
+        try
+        {
+            if (_backend != null
+                && _config.TransparentBackend.Enabled
+                && _config.TransparentBackend.Type == "proxifyre"
+                && _config.AppRoutes.Any(r => !r.IsPersistent))
+            {
+                var removed = _config.AppRoutes.RemoveAll(r => !r.IsPersistent);
+                if (removed > 0)
+                {
+                    _events?.Add("TmpRoutesPurged", $"removed {removed} session-only route(s) on exit");
+                    try { _backend.WriteConfig(); } catch (Exception ex) { Logger.Error($"Exit WriteConfig: {ex.Message}"); }
+                }
+            }
+        }
+        catch (Exception ex) { Logger.Error($"Exit cleanup failed: {ex.Message}"); }
+
         _monitor?.Dispose();
         _processMonitor?.Dispose();
         _sessionManager?.Dispose();

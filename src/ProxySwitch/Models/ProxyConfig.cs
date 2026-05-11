@@ -211,4 +211,12 @@ public class AppRoute
     /// <summary>"drop-zone-tmp" / "drop-zone-set" / "pinned" / "child-detected" / "user".</summary>
     [JsonPropertyName("source")]
     public string Source { get; set; } = "user";
+
+    /// <summary>
+    /// For session-only (tmp) routes: the LaunchSession.Id that owns this route.
+    /// When that session exits and the user finalizes it (or ProxySwitch closes),
+    /// the route is removed from app-config.json. Null for persistent routes.
+    /// </summary>
+    [JsonPropertyName("sessionId")]
+    public string? SessionId { get; set; }
 }

@@ -238,7 +238,7 @@ public class DashboardForm : Form
         return fallback;
     }
 
-    private void HandleDrop(string exePath, string mode)
+    private async void HandleDrop(string exePath, string mode)
     {
         var name = Path.GetFileNameWithoutExtension(exePath);
         var proxyId = mode switch
@@ -253,17 +253,20 @@ public class DashboardForm : Form
         if (mode != "direct" && proxyId != null)
         {
             var label = LabelForProxy(proxyId, proxyId);
-            // YesNo+Cancel = three-way choice:
-            //   Yes    → save the route into proxyswitch.json (next ProxySwitch start auto-applies it)
-            //   No     → just this session (tmp, in-memory only)
-            //   Cancel → don't launch
+            // YesNo+Cancel = three-way choice. Explicit about the side-effects:
+            //  Yes  → save permanently (proxyswitch.json + ProxiFyre app-config.json)
+            //  No   → just this session (only in ProxiFyre app-config.json; removed on session exit)
+            //  Cancel → don't launch
+            //
+            // Either choice triggers Apply, which writes app-config.json and may
+            // request UAC to restart the ProxiFyre service.
             var result = MessageBox.Show(
                 $"Launch {name} via {label}?\n\n" +
-                $"Yes  = Save route permanently (auto-applies next time ProxySwitch starts)\n" +
-                $"No   = Just this session (route disappears when you close ProxySwitch)\n" +
-                $"Cancel = don't launch\n\n" +
-                $"⚠ For launcher-style apps (Steam, Epic, game clients), child processes are " +
-                $"not auto-tracked — restart-after-handoff still needed.",
+                $"Yes  = Save route permanently — writes app-config.json and may show a UAC prompt to restart ProxiFyre.\n" +
+                $"No   = Just this session — same writes; route is removed when the session exits.\n" +
+                $"Cancel = abort.\n\n" +
+                $"⚠ Launcher-style apps (Steam, Epic, game clients): child processes are not auto-routed — " +
+                $"you'll need to use \"Route Child\" on the session card after handoff is detected.",
                 "Confirm Launch",
                 MessageBoxButtons.YesNoCancel,
                 MessageBoxIcon.Question);
@@ -272,7 +275,18 @@ public class DashboardForm : Form
             isPersistent = (result == DialogResult.Yes);
         }
 
-        _sessions.LaunchGeneric(exePath, name, mode, proxyId, isPersistent);
+        // Run LaunchGeneric on a background thread — it does WMI snapshots, file IO,
+        // optional UAC service restart, and ServiceController waits. None of that
+        // belongs on the UI thread. SessionsChanged event listeners use InvokeRequired
+        // to marshal back to the UI thread, so background-thread invocation is safe.
+        try
+        {
+            await Task.Run(() => _sessions.LaunchGeneric(exePath, name, mode, proxyId, isPersistent));
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"HandleDrop background launch failed: {ex.Message}");
+        }
     }
 
     private void LaunchPinned(AppConfig app)

@@ -136,19 +136,40 @@ public sealed class SessionManager : IDisposable
         _events.Add("SessionCreated", $"Session for {name}");
         _events.Add("LaunchStarted", $"Starting {name} ({mode})");
 
+        // Preflight: exe must exist, otherwise we waste a UAC prompt + write a route
+        // for an exe that can't even start. Fail early.
+        if (!File.Exists(exePath))
+        {
+            _events.Add("LaunchFailed", $"{name}: executable not found ({exePath})");
+            return new LaunchResult { Success = false, Error = $"Executable not found: {exePath}" };
+        }
+
         // Capture process baseline (synchronously) for correlated handoff fallback.
         // Must complete BEFORE Process.Start so launcher is not yet in baseline.
         var baseline = _processMonitor.CaptureProcessSnapshots();
         var baselineTask = Task.FromResult(baseline);
 
+        // Pre-generate sessionId so tmp routes can be bound to this future session
+        // BEFORE we call Apply / restart service.
+        var sessionId = Guid.NewGuid().ToString("N")[..8];
+
         // Ensure ProxiFyre route BEFORE launch so the new process is matched.
         // Returns the routing label that should appear on the session card.
-        string routingStatus = ResolveInitialRoutingStatus(exePath, mode, proxyId, isPersistentRoute);
+        string routingStatus = ResolveInitialRoutingStatus(exePath, mode, proxyId, isPersistentRoute, sessionId);
 
         var result = _launcher.LaunchGeneric(exePath);
 
         if (!result.Success)
         {
+            // Rollback: the route we just added for an app that didn't actually launch.
+            // Persistent routes are intentionally left in place (user explicitly chose
+            // to save them — they'll re-try next time), tmp routes are removed.
+            if (!isPersistentRoute && _backend != null && !string.IsNullOrEmpty(proxyId)
+                && routingStatus.StartsWith("proxifyre-", StringComparison.Ordinal))
+            {
+                try { _backend.RemoveRouteByExe(exePath, proxyId); }
+                catch (Exception ex) { Logger.Error($"Rollback after launch fail: {ex.Message}"); }
+            }
             _events.Add("LaunchFailed", $"{name}: {result.Error}");
             return result;
         }
@@ -160,6 +181,7 @@ public sealed class SessionManager : IDisposable
         // routingStatus was decided before launch (depends on backend availability)
         var session = new LaunchSession
         {
+            Id = sessionId,
             Name = name,
             ExePath = exePath,
             Kind = "generic",
@@ -304,11 +326,12 @@ public sealed class SessionManager : IDisposable
                 _events.Add("ProcessExited", $"{session.Name}: tracked process exited");
                 if (!session.HasLiveProcesses && session.Status is "running-via-child" or "running-via-correlated")
                 {
-                    session.Status = "exited";
-                    session.ExitedAt = DateTime.Now;
-                    _events.Add("SessionExited", $"{session.Name} all processes exited");
+                    FinalizeAsExited(session, "all tracked processes exited");
                 }
-                SessionsChanged?.Invoke();
+                else
+                {
+                    SessionsChanged?.Invoke();
+                }
             }
         }
     }
@@ -383,7 +406,31 @@ public sealed class SessionManager : IDisposable
         session.Status = "exited";
         session.ExitedAt = DateTime.Now;
         _events.Add("SessionExited", $"{session.Name} exited ({reason})");
+        CleanupSessionRoutes(session);
         SessionsChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// When a session ends, remove any session-only routes bound to it and
+    /// rewrite ProxiFyre's app-config.json so they don't linger across runs.
+    /// We do NOT restart the ProxiFyre service here — that would mean one UAC
+    /// prompt every time a tmp session exits. ProxiFyre keeps the now-removed
+    /// route in memory until its next restart; the config file on disk is
+    /// already clean, so the next service restart cleans up for real.
+    /// </summary>
+    private void CleanupSessionRoutes(LaunchSession session)
+    {
+        if (_backend == null) return;
+        if (!_backend.RemoveTmpRoutesForSession(session.Id)) return;
+        try
+        {
+            _backend.WriteConfig();
+            _events.Add("TmpRoutesCleared", $"{session.Name}: session-only routes removed from app-config.json (service may still hold them until next restart)");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"CleanupSessionRoutes failed: {ex.Message}");
+        }
     }
 
     public void AttachCorrelated(LaunchSession session, HandoffCandidate candidate, ProcessTrackingConfidence confidence, bool autoAttached)
@@ -442,7 +489,7 @@ public sealed class SessionManager : IDisposable
     /// Decide what RoutingStatus the session should start with based on mode and
     /// whether the ProxiFyre backend is configured and able to write a route.
     /// </summary>
-    private string ResolveInitialRoutingStatus(string exePath, string mode, string? proxyId, bool isPersistentRoute)
+    private string ResolveInitialRoutingStatus(string exePath, string mode, string? proxyId, bool isPersistentRoute, string sessionId)
     {
         if (mode == "direct" || string.IsNullOrEmpty(proxyId))
             return "direct";
@@ -467,7 +514,7 @@ public sealed class SessionManager : IDisposable
         try
         {
             var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
-            _backend.EnsureRoute(exePath, proxyId, source: source, isPersistent: isPersistentRoute);
+            _backend.EnsureRoute(exePath, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId);
             var apply = _backend.Apply(restartService: _config.TransparentBackend.AutoRestartOnConfigChange);
             if (!apply.Success)
             {

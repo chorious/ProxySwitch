@@ -11,6 +11,7 @@ public class SettingsForm : Form
     private DataGridView _proxyGrid = null!;
     private DataGridView _appGrid = null!;
     private DataGridView _backendGrid = null!;
+    private DataGridView _routeGrid = null!;
 
     private CheckBox _bkEnabled = null!;
     private ComboBox _bkType = null!;
@@ -112,6 +113,26 @@ public class SettingsForm : Form
         backendTab.Controls.Add(_backendGrid);
         tabs.TabPages.Add(backendTab);
 
+        // App Routes tab (per-app routing rules ProxiFyre uses)
+        var routesTab = new TabPage("App Routes");
+        _routeGrid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = false,    // adds happen via drag-drop on Dashboard
+            AllowUserToDeleteRows = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect
+        };
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 180 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ExePath", HeaderText = "Executable", Width = 260 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", Width = 120 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy", Width = 70 });
+        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", HeaderText = "Enabled", Width = 60 });
+        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 60 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", Width = 110, ReadOnly = true });
+        routesTab.Controls.Add(_routeGrid);
+        tabs.TabPages.Add(routesTab);
+
         // Transparent Backend tab (ProxiFyre)
         var transparentTab = new TabPage("Transparent Backend");
         transparentTab.Padding = new Padding(12);
@@ -181,7 +202,8 @@ public class SettingsForm : Form
         {
             Text = "ProxiFyre is open source: https://github.com/wiresock/proxifyre\n" +
                    "Requires Windows Packet Filter driver (separate install). Run ProxiFyre.exe as administrator.\n" +
-                   "ProxySwitch writes app-config.json based on AppRoutes; it does NOT install drivers or auto-elevate.",
+                   "ProxySwitch writes app-config.json based on AppRoutes. It does NOT install drivers or services. " +
+                   "If Auto-restart is enabled it may request UAC to restart the configured ProxiFyre service.",
             Dock = DockStyle.Bottom,
             AutoSize = true,
             ForeColor = Color.DimGray,
@@ -217,6 +239,7 @@ public class SettingsForm : Form
         _proxyGrid.DataSource = new BindingSource { DataSource = _config.Proxies };
         _appGrid.DataSource = new BindingSource { DataSource = _config.Apps };
         _backendGrid.DataSource = new BindingSource { DataSource = _config.RoutingBackends };
+        _routeGrid.DataSource = new BindingSource { DataSource = _config.AppRoutes };
     }
 
     private void OnSave(object? sender, EventArgs e)
@@ -224,6 +247,7 @@ public class SettingsForm : Form
         _proxyGrid.EndEdit();
         _appGrid.EndEdit();
         _backendGrid.EndEdit();
+        _routeGrid.EndEdit();
 
         // Push transparent backend form fields back into the model
         var be = _config.TransparentBackend;
