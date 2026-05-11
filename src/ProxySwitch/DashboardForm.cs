@@ -35,6 +35,7 @@ public class DashboardForm : Form
         BuildUI();
 
         _sessions.SessionsChanged += OnSessionsChanged;
+        _sessions.CorrelatedCandidatesFound += OnCorrelatedCandidatesFound;
         _events.EventAdded += OnEventAdded;
         _monitor.StatusChanged += OnProxyStatusChanged;
 
@@ -340,7 +341,10 @@ public class DashboardForm : Form
 
         // Actions
         var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
-        if (session.Status == "running" || session.Status == "running-via-child")
+        var isLive = session.Status is "running" or "running-via-child" or "running-via-correlated";
+        var isChecking = session.Status == "checking-correlated";
+
+        if (isLive)
         {
             var stopBtn = new Button { Text = "Stop", AutoSize = true, Height = 24 };
             stopBtn.Click += (_, _) =>
@@ -349,6 +353,11 @@ public class DashboardForm : Form
                     _sessions.StopSession(session);
             };
             btnPanel.Controls.Add(stopBtn);
+        }
+        else if (isChecking)
+        {
+            var checkingLbl = new Label { Text = "Detecting...", AutoSize = true, ForeColor = Color.SteelBlue };
+            btnPanel.Controls.Add(checkingLbl);
         }
         else
         {
@@ -398,6 +407,8 @@ public class DashboardForm : Form
     {
         "running" => "Running",
         "running-via-child" => "Via child",
+        "running-via-correlated" => "Via correlated",
+        "checking-correlated" => "Checking...",
         "exited" => "Exited",
         "failed" => "Failed",
         _ => session.Status
@@ -462,10 +473,12 @@ public class DashboardForm : Form
 
     private static Color GetSessionColor(string status) => status switch
     {
-        "running" => Color.FromArgb(220, 252, 231),         // light green
-        "running-via-child" => Color.FromArgb(254, 249, 195), // light yellow
-        "exited" => Color.FromArgb(243, 244, 246),          // light gray
-        "failed" => Color.FromArgb(254, 226, 226),          // light red
+        "running" => Color.FromArgb(220, 252, 231),               // light green
+        "running-via-child" => Color.FromArgb(254, 249, 195),     // light yellow
+        "running-via-correlated" => Color.FromArgb(254, 215, 170), // light orange
+        "checking-correlated" => Color.FromArgb(219, 234, 254),   // light blue
+        "exited" => Color.FromArgb(243, 244, 246),                // light gray
+        "failed" => Color.FromArgb(254, 226, 226),                // light red
         _ => Color.White
     };
 
@@ -499,8 +512,31 @@ public class DashboardForm : Form
         _refreshTimer?.Stop();
         _refreshTimer?.Dispose();
         _sessions.SessionsChanged -= OnSessionsChanged;
+        _sessions.CorrelatedCandidatesFound -= OnCorrelatedCandidatesFound;
         _events.EventAdded -= OnEventAdded;
         _monitor.StatusChanged -= OnProxyStatusChanged;
         base.OnFormClosing(e);
+    }
+
+    private void OnCorrelatedCandidatesFound(LaunchSession session, List<HandoffCandidate> candidates)
+    {
+        if (InvokeRequired) { Invoke(() => OnCorrelatedCandidatesFound(session, candidates)); return; }
+
+        using var dlg = new CorrelatedHandoffDialog(session, candidates);
+        var result = dlg.ShowDialog(this);
+        if (result == DialogResult.OK && dlg.SelectedCandidate != null)
+        {
+            var confidence = dlg.SelectedCandidate.Confidence == "high"
+                ? ProcessTrackingConfidence.CorrelatedHigh
+                : ProcessTrackingConfidence.CorrelatedMedium;
+            // User-selected → mark as UserSelected to make audit trail clear
+            _sessions.AttachCorrelated(session, dlg.SelectedCandidate, ProcessTrackingConfidence.UserSelected, autoAttached: false);
+        }
+        else if (dlg.Ignored)
+        {
+            _sessions.IgnoreCorrelated(session);
+        }
+        // If dialog closed via X, leave session in checking-correlated state
+        // (next refresh tick will not auto-resolve, user can re-open via event re-fire if needed)
     }
 }

@@ -75,6 +75,7 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.3.2 | ✅ | Session 卡片刷新、Drop zone 重绘、WorkingDirectory 修复 |
 | v0.4 | ✅ | 子进程跟踪、launcher handoff 检测、Proxifier Assist 提示（UI 空壳） |
 | v0.4.1 | ✅ | Assist Mode 实装（XML 写 .ppx）、PID 复用守卫、浏览器不走 handoff、WMI 字段裁剪 |
+| v0.4.2 | ✅ | Correlated Handoff Tracking（ShellExecute / COM / UAC handoff 检测） |
 | v0.5 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
 | v0.6 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
 | v1.0 | 📋 | 安装包、开机自启 |
@@ -93,6 +94,29 @@ ProxySwitch 不能自动给 launcher 启动的 child 进程加 Proxifier 规则�
 5. 卡片状态变成 `assisted`，未来 child 进程的流量就走 10708 了
 
 ⚠ 规则是 exe 名匹配，不限 PID。其他地方启动同名 exe 也会被路由。
+
+## v0.4.2 Correlated Handoff Tracking
+
+某些 launcher 启动应用不走父子进程链：
+
+- `launcher.exe → ShellExecute → broker → real-app.exe`
+- `launcher.exe → COM 调用 → real-app.exe`
+- `launcher.exe → UAC 提权 → consent → elevated-app.exe`
+- `launcher.exe → IPC → 已经在跑的 app`
+
+这种情况下 `real-app.exe` 的 `ParentProcessId` 不指向 launcher，v0.4.1 的 descendant tracking 看不到它，session 会错误标 exited。
+
+v0.4.2 加了**相关性 handoff 跟踪**作为第二条检测路径：
+
+1. 启动前拍进程快照（baseline）
+2. 等 launcher 退 + 没有 descendant 时，拍 after snapshot，diff 出窗口期内的新进程
+3. 启发式打分：同目录、命令行包含 launcher 路径、创建时间在 0-5 秒内 = 强信号；系统 broker（explorer / svchost / RuntimeBroker）= 负分
+4. 阈值：
+   - ≥70 高置信度 → 自动 attach 为 `Running via correlated` 状态
+   - 40-69 中置信度 → 弹对话框让用户选 `Track Selected / Ignore / Open Location`
+   - <40 → 忽略，session 标 exited
+
+**重要：相关性 handoff 是启发式推测，不是证明**。Dashboard 会清楚标注 `unverified routing`，Add Rule 仍需要用户确认。
 
 ## License
 

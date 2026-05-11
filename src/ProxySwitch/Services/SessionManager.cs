@@ -5,13 +5,20 @@ namespace ProxySwitch.Services;
 public sealed class SessionManager : IDisposable
 {
     private readonly List<LaunchSession> _sessions = new();
+    private readonly Dictionary<string, Task<List<ProcessSnapshot>>> _baselines = new();
     private readonly AppLauncher _launcher;
     private readonly ProcessMonitor _processMonitor;
     private readonly EventStore _events;
     private readonly ProxifierProfileGenerator _profileGen;
+    private readonly HandoffScorer _scorer;
     private readonly ProxyConfig _config;
 
     public event Action? SessionsChanged;
+    /// <summary>
+    /// Fired when root exited with no descendant alive, and correlated scoring
+    /// returned only medium-confidence candidates that need user confirmation.
+    /// </summary>
+    public event Action<LaunchSession, List<HandoffCandidate>>? CorrelatedCandidatesFound;
 
     public SessionManager(AppLauncher launcher, ProcessMonitor monitor, EventStore events, ProxyConfig config)
     {
@@ -20,6 +27,7 @@ public sealed class SessionManager : IDisposable
         _events = events;
         _config = config;
         _profileGen = new ProxifierProfileGenerator();
+        _scorer = new HandoffScorer();
     }
 
     public IReadOnlyList<LaunchSession> GetSessions()
@@ -133,6 +141,10 @@ public sealed class SessionManager : IDisposable
         _events.Add("SessionCreated", $"Session for {name}");
         _events.Add("LaunchStarted", $"Starting {name} in {mode} mode");
 
+        // Capture process baseline BEFORE launching, for correlated handoff fallback.
+        // Fire-and-forget: SessionManager will await this task later if needed.
+        var baselineTask = _processMonitor.CaptureProcessSnapshotsAsync();
+
         var result = _launcher.LaunchGeneric(exePath);
 
         if (!result.Success)
@@ -178,6 +190,7 @@ public sealed class SessionManager : IDisposable
         }
 
         lock (_sessions) _sessions.Add(session);
+        lock (_baselines) _baselines[session.Id] = baselineTask;
         SessionsChanged?.Invoke();
         _events.Add("LaunchSucceeded", $"{name} started, PID={result.ProcessId}");
 
@@ -245,14 +258,31 @@ public sealed class SessionManager : IDisposable
                     {
                         _events.Add("LauncherHandoffDetected", $"{name}: launcher exited, child still running");
                     }
+                    SessionsChanged?.Invoke();
                 }
                 else
                 {
-                    session.Status = "exited";
-                    session.ExitedAt = DateTime.Now;
-                    _events.Add("SessionExited", $"{name} exited");
+                    // No descendant alive. Try correlated handoff before marking exited.
+                    session.Status = "checking-correlated";
+                    _events.Add("CheckingCorrelatedHandoff", $"{name}: looking for correlated handoff process");
+                    SessionsChanged?.Invoke();
+
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await TryCorrelatedHandoffAsync(session, baselineTask);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error($"TryCorrelatedHandoffAsync for {name} failed: {ex.Message}");
+                            session.Status = "exited";
+                            session.ExitedAt = DateTime.Now;
+                            _events.Add("SessionExited", $"{name} exited (correlated check failed)");
+                            SessionsChanged?.Invoke();
+                        }
+                    });
                 }
-                SessionsChanged?.Invoke();
             });
 
             // Also track descendants for exit detection (added in onDescendant callback)
@@ -317,6 +347,137 @@ public sealed class SessionManager : IDisposable
             if (proc != null)
                 proc.ExitedAt = DateTime.Now;
         }
+    }
+
+    /// <summary>
+    /// Run correlated handoff detection after root exits with no descendant alive.
+    /// </summary>
+    private async Task TryCorrelatedHandoffAsync(LaunchSession session, Task<List<ProcessSnapshot>> baselineTask)
+    {
+        var baseline = await baselineTask;
+        var baselinePids = baseline.Select(p => p.ProcessId).ToHashSet();
+        var rootExitedAt = session.Processes.FirstOrDefault(p => p.Role == "root")?.ExitedAt ?? DateTime.Now;
+
+        // Give some extra time for slow handoff (e.g. UAC, COM)
+        await Task.Delay(3000);
+
+        var current = await _processMonitor.CaptureProcessSnapshotsAsync();
+        var newProcesses = current
+            .Where(p => !baselinePids.Contains(p.ProcessId))
+            .Where(p => p.ProcessId != session.RootProcessId) // exclude launcher itself
+            .Where(p => p.CreatedAt == null || p.CreatedAt >= session.StartedAt.AddSeconds(-1))
+            .ToList();
+
+        if (newProcesses.Count == 0)
+        {
+            FinalizeAsExited(session, "no correlated handoff found");
+            return;
+        }
+
+        var candidates = _scorer.Score(
+            launcherExePath: session.ExePath,
+            launcherStartedAt: session.StartedAt,
+            rootExitedAt: rootExitedAt,
+            newProcesses: newProcesses);
+
+        // Filter to alive processes only
+        candidates = candidates.Where(c => ProcessMonitor.IsAlive(c.Process.ProcessId)).ToList();
+
+        var high = candidates.Where(c => c.Confidence == "high").ToList();
+        var medium = candidates.Where(c => c.Confidence == "medium").ToList();
+
+        if (high.Count == 1)
+        {
+            AttachCorrelated(session, high[0], ProcessTrackingConfidence.CorrelatedHigh, autoAttached: true);
+            return;
+        }
+
+        if (high.Count > 1)
+        {
+            // Multiple high-confidence: ask user to pick (treat as medium for confirmation)
+            _events.Add("CorrelatedCandidatesFound", $"{session.Name}: {high.Count} high-confidence candidates, user confirmation needed");
+            CorrelatedCandidatesFound?.Invoke(session, high);
+            // Leave session in checking-correlated state; user confirms or ignores
+            return;
+        }
+
+        if (medium.Count > 0)
+        {
+            _events.Add("CorrelatedCandidatesFound", $"{session.Name}: {medium.Count} medium-confidence candidates, user confirmation needed");
+            CorrelatedCandidatesFound?.Invoke(session, medium);
+            return;
+        }
+
+        // Only low-confidence candidates → finalize
+        FinalizeAsExited(session, $"only low-confidence candidates ({candidates.Count}), ignored");
+    }
+
+    private void FinalizeAsExited(LaunchSession session, string reason)
+    {
+        session.Status = "exited";
+        session.ExitedAt = DateTime.Now;
+        _events.Add("SessionExited", $"{session.Name} exited ({reason})");
+        SessionsChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Attach a correlated handoff candidate to the session. Updates state and tracks the new PID.
+    /// </summary>
+    public void AttachCorrelated(LaunchSession session, HandoffCandidate candidate, ProcessTrackingConfidence confidence, bool autoAttached)
+    {
+        var proc = new TrackedProcess
+        {
+            ProcessId = candidate.Process.ProcessId,
+            ParentProcessId = candidate.Process.ParentProcessId,
+            Name = candidate.Process.Name,
+            ExecutablePath = candidate.Process.ExecutablePath,
+            CommandLine = candidate.Process.CommandLine,
+            CreatedAt = candidate.Process.CreatedAt,
+            Role = "correlated",
+            Confidence = confidence,
+            CorrelationScore = candidate.Score
+        };
+        proc.CorrelationReasons.AddRange(candidate.Reasons);
+
+        lock (session.Processes)
+        {
+            if (!session.Processes.Any(p => p.ProcessId == proc.ProcessId))
+                session.Processes.Add(proc);
+        }
+
+        session.Status = "running-via-correlated";
+        session.IsLauncherHandoffDetected = true;
+        session.RoutingStatus = "unverified";
+        session.RoutingWarning = $"{proc.Name} appears to be the handoff target (score {candidate.Score}). Routing through Proxifier is unverified.";
+
+        var verb = autoAttached ? "auto-attached" : "user-attached";
+        _events.Add("CorrelatedHandoffAttached", $"{session.Name}: {verb} {proc.Name} (PID={proc.ProcessId}, score={candidate.Score}, confidence={candidate.Confidence})");
+
+        // Track the new PID for exit
+        _processMonitor.TrackPid(proc.ProcessId, () =>
+        {
+            MarkProcessExited(session, proc.ProcessId);
+            _events.Add("ProcessExited", $"{session.Name}: correlated process {proc.Name} exited");
+            if (!session.HasLiveProcesses)
+            {
+                FinalizeAsExited(session, "correlated process exited");
+            }
+            else
+            {
+                SessionsChanged?.Invoke();
+            }
+        });
+
+        SessionsChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// User decided to ignore correlated candidates. Finalize session as exited.
+    /// </summary>
+    public void IgnoreCorrelated(LaunchSession session)
+    {
+        _events.Add("CorrelatedHandoffIgnored", $"{session.Name}: user ignored correlated candidates");
+        FinalizeAsExited(session, "user ignored correlated candidates");
     }
 
     private static string? ProxyIdToGeneratedKey(string? proxyId) => proxyId switch

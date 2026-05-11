@@ -231,6 +231,40 @@ public class ProcessMonitor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Capture a snapshot of all currently running processes with full metadata.
+    /// Used as baseline before launch and as candidate pool after launch window.
+    /// </summary>
+    public async Task<List<ProcessSnapshot>> CaptureProcessSnapshotsAsync(CancellationToken ct = default)
+    {
+        return await Task.Run(() => GetFullProcessSnapshots(), ct);
+    }
+
+    private static List<ProcessSnapshot> GetFullProcessSnapshots()
+    {
+        var result = new List<ProcessSnapshot>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate, SessionId FROM Win32_Process");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                result.Add(new ProcessSnapshot
+                {
+                    ProcessId = Convert.ToInt32(obj["ProcessId"]),
+                    ParentProcessId = obj["ParentProcessId"] != null ? Convert.ToInt32(obj["ParentProcessId"]) : null,
+                    Name = obj["Name"]?.ToString() ?? "",
+                    ExecutablePath = obj["ExecutablePath"]?.ToString(),
+                    CommandLine = obj["CommandLine"]?.ToString(),
+                    CreatedAt = ParseWmiDate(obj["CreationDate"]?.ToString()),
+                    SessionId = obj["SessionId"] != null ? Convert.ToInt32(obj["SessionId"]) : null
+                });
+            }
+        }
+        catch (Exception ex) { Logger.Error($"GetFullProcessSnapshots failed: {ex.Message}"); }
+        return result;
+    }
+
     private void OnTick(object? sender, EventArgs e)
     {
         // Check tracked PIDs (fast, stays on UI thread)
