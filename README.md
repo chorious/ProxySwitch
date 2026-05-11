@@ -76,8 +76,31 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.4 | ✅ | 子进程跟踪、launcher handoff 检测、Proxifier Assist 提示（UI 空壳） |
 | v0.4.1 | ✅ | Assist Mode 实装（XML 写 .ppx）、PID 复用守卫、浏览器不走 handoff、WMI 字段裁剪 |
 | v0.4.2 | ✅ | Correlated Handoff Tracking（ShellExecute / COM / UAC handoff 检测） |
-| v0.4.3 | ✅ | Add Rule 支持 correlated、原子写 .ppx、Dialog 队列化、可见窗口信号 |
-| v0.5 | 📋 | 自动发现应用路径、导入 .ppx、应用规则预设 |
+| v0.4.3.1 | ✅ | 修 sync-over-async 死锁 |
+| v0.5 | ✅ | Routing Decoupled — 删 Proxifier 假装集成，改名 Clash Verge / v2ray，Copy Rule Hint |
+| v0.6 | 📋 | ProxiFyre transparent per-app backend（generic app 真路由） |
+| v0.7 | 📋 | 自动发现应用路径、应用规则预设 |
+| v1.0 | 📋 | 安装包、开机自启 |
+
+## v0.5 重要方向调整：Routing Decoupled
+
+从 v0.4 一路下来，所有"Assist Mode"/"Add Rule"/"AssistRouting" 都是基于"Proxifier 已安装"的假设——实测发现根本没装。这意味着所有 Proxifier 集成代码从未端到端验证过 Proxifier 是否真识别我们生成的 `.ppx`。
+
+v0.5 做了诚实的方向调整：
+
+| 之前的假设 | 实际情况 | v0.5 处理 |
+|---|---|---|
+| Proxifier 是路由后端 | 没装 | **删除** ProxifierProfileGenerator / AddAssistRule / .ppx 写入 |
+| 10708 / 10808 后面是 Proxifier | 实际是 Clash Verge / v2ray | 配置 label 改成 `Clash Verge 10708` / `v2ray 10808` |
+| ProxySwitch 控制 generic app 路由 | 控制不了，由 Clash/v2ray 规则决定 | session card 显示 `Routing: External router`，**不**假装路由有效 |
+| Add Rule 自动改 .ppx | 实际不工作 | 改为 **Copy Rule Hint**：生成 Clash/v2ray 规则片段让用户复制 |
+
+**v0.5 边界：**
+- 浏览器 `--proxy-server` → ProxySwitch **真控制**（启动参数）
+- Generic app + proxy intent → **外部路由器决定**（Clash Verge / v2ray rule）
+- ProxySwitch 只做 launcher + monitor + Copy Rule Hint + Open Routing Config
+
+v0.6 计划用开源的 **ProxiFyre**（Windows packet filter）真做 per-app 透明代理，把 generic app 路由真正抓回 ProxySwitch 管理。
 | v0.6 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
 | v1.0 | 📋 | 安装包、开机自启 |
 

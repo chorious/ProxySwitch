@@ -10,15 +10,10 @@ public sealed class SessionManager : IDisposable
     private readonly AppLauncher _launcher;
     private readonly ProcessMonitor _processMonitor;
     private readonly EventStore _events;
-    private readonly ProxifierProfileGenerator _profileGen;
     private readonly HandoffScorer _scorer;
     private readonly ProxyConfig _config;
 
     public event Action? SessionsChanged;
-    /// <summary>
-    /// Fired when root exited with no descendant alive, and correlated scoring
-    /// returned only medium-confidence candidates that need user confirmation.
-    /// </summary>
     public event Action<LaunchSession, List<HandoffCandidate>>? CorrelatedCandidatesFound;
 
     public SessionManager(AppLauncher launcher, ProcessMonitor monitor, EventStore events, ProxyConfig config)
@@ -27,7 +22,6 @@ public sealed class SessionManager : IDisposable
         _processMonitor = monitor;
         _events = events;
         _config = config;
-        _profileGen = new ProxifierProfileGenerator();
         _scorer = new HandoffScorer();
     }
 
@@ -39,7 +33,7 @@ public sealed class SessionManager : IDisposable
     public LaunchResult LaunchBrowser(AppConfig app, string mode, string? proxyId = null)
     {
         _events.Add("SessionCreated", $"Session for {app.Name}");
-        _events.Add("LaunchStarted", $"Starting {app.Name} in {mode} mode");
+        _events.Add("LaunchStarted", $"Starting {app.Name} ({mode})");
 
         var result = _launcher.LaunchBrowser(app);
 
@@ -64,7 +58,7 @@ public sealed class SessionManager : IDisposable
             RootProcessId = result.ProcessId,
             RootCreatedAt = rootCreatedAt,
             Status = "running",
-            RoutingStatus = mode == "browser-direct" ? "direct" : "browser-arg"
+            RoutingStatus = mode == "browser-direct" ? "direct" : "browser-proxy-active"
         };
 
         if (result.ProcessId.HasValue)
@@ -83,8 +77,6 @@ public sealed class SessionManager : IDisposable
         SessionsChanged?.Invoke();
         _events.Add("LaunchSucceeded", $"{app.Name} started, PID={result.ProcessId}");
 
-        // Browser: track by userDataDir + root PID liveness only
-        // Do NOT use process tree tracking — browser sub-processes are not "handoff children"
         if (!string.IsNullOrEmpty(app.UserDataDir))
         {
             _processMonitor.TrackBrowser(app.UserDataDir, pids =>
@@ -137,16 +129,13 @@ public sealed class SessionManager : IDisposable
         };
     }
 
-    public LaunchResult LaunchGeneric(string exePath, string name, string mode, string? proxyId = null, bool profileLoaded = false)
+    public LaunchResult LaunchGeneric(string exePath, string name, string mode, string? proxyId = null)
     {
         _events.Add("SessionCreated", $"Session for {name}");
-        _events.Add("LaunchStarted", $"Starting {name} in {mode} mode");
+        _events.Add("LaunchStarted", $"Starting {name} ({mode})");
 
-        // Capture process baseline BEFORE launching, for correlated handoff fallback.
-        // Use the SYNC variant: calling .GetAwaiter().GetResult() on the async one
-        // from the UI thread deadlocks (await continuation needs UI SyncContext,
-        // UI thread is blocked on GetResult). GetFullProcessSnapshots is already
-        // synchronous internally — no real benefit from the async wrapper here.
+        // Capture process baseline (synchronously) for correlated handoff fallback.
+        // Must complete BEFORE Process.Start so launcher is not yet in baseline.
         var baseline = _processMonitor.CaptureProcessSnapshots();
         var baselineTask = Task.FromResult(baseline);
 
@@ -162,12 +151,10 @@ public sealed class SessionManager : IDisposable
             ? (ProcessMonitor.GetProcessStartTime(result.ProcessId.Value) ?? DateTime.Now)
             : DateTime.Now;
 
-        var routingStatus = mode switch
-        {
-            "direct" => "direct",
-            _ when profileLoaded => "profile-loaded",
-            _ => "unverified"
-        };
+        // Routing semantics under v0.5: ProxySwitch never claims to verify generic routing.
+        // direct intent → "direct"
+        // proxy intent → "external-routing-required" (Clash Verge / v2ray decides)
+        var routingStatus = mode == "direct" ? "direct" : "external-routing-required";
 
         var session = new LaunchSession
         {
@@ -205,7 +192,6 @@ public sealed class SessionManager : IDisposable
         {
             var rootPid = result.ProcessId.Value;
 
-            // Track process tree (fire and forget but with exception handling)
             _ = Task.Run(async () =>
             {
                 try
@@ -232,7 +218,6 @@ public sealed class SessionManager : IDisposable
                 }
             });
 
-            // Track root PID liveness
             _processMonitor.TrackPid(rootPid, () =>
             {
                 MarkProcessExited(session, rootPid);
@@ -242,45 +227,7 @@ public sealed class SessionManager : IDisposable
                 {
                     session.Status = "running-via-child";
                     session.IsLauncherHandoffDetected = true;
-
-                    var liveChild = session.Processes.FirstOrDefault(p => p.ExitedAt == null && p.Role == "descendant");
-                    if (liveChild != null && !session.IsRoutingAssisted)
-                    {
-                        // Default to unverified; check generated profile asynchronously
-                        // to avoid blocking the UI thread on XML IO.
-                        session.RoutingStatus = "unverified";
-                        session.RoutingWarning = $"{liveChild.Name} is running but Proxifier routing is unverified. Generated profile may need a rule for this exe.";
-                        _events.Add("RoutingUnverified", $"{name}: {liveChild.Name} running, routing unverified");
-
-                        var profileKey = ProxyIdToGeneratedKey(proxyId);
-                        var childName = liveChild.Name;
-                        if (profileKey != null)
-                        {
-                            _ = Task.Run(() =>
-                            {
-                                try
-                                {
-                                    if (IsChildInGeneratedRule(profileKey, childName))
-                                    {
-                                        // Upgrade to assisted if already covered
-                                        session.RoutingStatus = "assisted";
-                                        session.IsRoutingAssisted = true;
-                                        session.RoutingWarning = null;
-                                        _events.Add("LauncherHandoffDetected", $"{name}: child {childName} already in assist rule");
-                                        SessionsChanged?.Invoke();
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Logger.Error($"IsChildInGeneratedRule check failed for {name}: {ex.Message}");
-                                }
-                            });
-                        }
-                    }
-                    else
-                    {
-                        _events.Add("LauncherHandoffDetected", $"{name}: launcher exited, child still running");
-                    }
+                    _events.Add("LauncherHandoffDetected", $"{name}: launcher exited, child still running");
                     SessionsChanged?.Invoke();
                 }
                 else
@@ -299,23 +246,19 @@ public sealed class SessionManager : IDisposable
                         catch (Exception ex)
                         {
                             Logger.Error($"TryCorrelatedHandoffAsync for {name} failed: {ex.Message}");
-                            session.Status = "exited";
-                            session.ExitedAt = DateTime.Now;
-                            _events.Add("SessionExited", $"{name} exited (correlated check failed)");
-                            SessionsChanged?.Invoke();
+                            FinalizeAsExited(session, "correlated check failed");
                         }
                     });
                 }
             });
 
-            // Also track descendants for exit detection (added in onDescendant callback)
             _ = Task.Run(async () =>
             {
                 try
                 {
                     await MonitorDescendantsAsync(session, cts.Token);
                 }
-                catch (OperationCanceledException) { /* expected on RemoveSession/Dispose */ }
+                catch (OperationCanceledException) { }
                 catch (Exception ex) { Logger.Error($"MonitorDescendants for {name} failed: {ex.Message}"); }
             });
         }
@@ -331,11 +274,6 @@ public sealed class SessionManager : IDisposable
 
     private async Task MonitorDescendantsAsync(LaunchSession session, CancellationToken ct)
     {
-        // Poll every 2s for descendant/correlated process exits.
-        // Exits when:
-        //  - no more live processes (session naturally exited)
-        //  - session status is terminal
-        //  - cancellation requested (RemoveSession or Dispose)
         while (!ct.IsCancellationRequested
                && session.HasLiveProcesses
                && session.Status != "exited"
@@ -383,22 +321,18 @@ public sealed class SessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// Run correlated handoff detection after root exits with no descendant alive.
-    /// </summary>
     private async Task TryCorrelatedHandoffAsync(LaunchSession session, Task<List<ProcessSnapshot>> baselineTask)
     {
         var baseline = await baselineTask;
         var baselinePids = baseline.Select(p => p.ProcessId).ToHashSet();
         var rootExitedAt = session.Processes.FirstOrDefault(p => p.Role == "root")?.ExitedAt ?? DateTime.Now;
 
-        // Give some extra time for slow handoff (e.g. UAC, COM)
         await Task.Delay(3000);
 
         var current = await _processMonitor.CaptureProcessSnapshotsAsync();
         var newProcesses = current
             .Where(p => !baselinePids.Contains(p.ProcessId))
-            .Where(p => p.ProcessId != session.RootProcessId) // exclude launcher itself
+            .Where(p => p.ProcessId != session.RootProcessId)
             .Where(p => p.CreatedAt == null || p.CreatedAt >= session.StartedAt.AddSeconds(-1))
             .ToList();
 
@@ -414,7 +348,6 @@ public sealed class SessionManager : IDisposable
             rootExitedAt: rootExitedAt,
             newProcesses: newProcesses);
 
-        // Filter to alive processes only
         candidates = candidates.Where(c => ProcessMonitor.IsAlive(c.Process.ProcessId)).ToList();
 
         var high = candidates.Where(c => c.Confidence == "high").ToList();
@@ -428,10 +361,8 @@ public sealed class SessionManager : IDisposable
 
         if (high.Count > 1)
         {
-            // Multiple high-confidence: ask user to pick (treat as medium for confirmation)
             _events.Add("CorrelatedCandidatesFound", $"{session.Name}: {high.Count} high-confidence candidates, user confirmation needed");
             CorrelatedCandidatesFound?.Invoke(session, high);
-            // Leave session in checking-correlated state; user confirms or ignores
             return;
         }
 
@@ -442,7 +373,6 @@ public sealed class SessionManager : IDisposable
             return;
         }
 
-        // Only low-confidence candidates → finalize
         FinalizeAsExited(session, $"only low-confidence candidates ({candidates.Count}), ignored");
     }
 
@@ -454,9 +384,6 @@ public sealed class SessionManager : IDisposable
         SessionsChanged?.Invoke();
     }
 
-    /// <summary>
-    /// Attach a correlated handoff candidate to the session. Updates state and tracks the new PID.
-    /// </summary>
     public void AttachCorrelated(LaunchSession session, HandoffCandidate candidate, ProcessTrackingConfidence confidence, bool autoAttached)
     {
         var proc = new TrackedProcess
@@ -481,15 +408,11 @@ public sealed class SessionManager : IDisposable
 
         session.Status = "running-via-correlated";
         session.IsLauncherHandoffDetected = true;
-        session.RoutingStatus = "unverified";
-        session.RoutingWarning =
-            $"⚠ Correlated handoff (inferred, not proven): {proc.Name} matched score {candidate.Score}. " +
-            $"Proxifier may need a separate rule for this exe — routing is unverified.";
+        // Routing semantics: still external-routing-required — we do not claim to control routing.
 
         var verb = autoAttached ? "auto-attached" : "user-attached";
         _events.Add("CorrelatedHandoffAttached", $"{session.Name}: {verb} {proc.Name} (PID={proc.ProcessId}, score={candidate.Score}, confidence={candidate.Confidence})");
 
-        // Track the new PID for exit
         _processMonitor.TrackPid(proc.ProcessId, () =>
         {
             MarkProcessExited(session, proc.ProcessId);
@@ -507,111 +430,10 @@ public sealed class SessionManager : IDisposable
         SessionsChanged?.Invoke();
     }
 
-    /// <summary>
-    /// User decided to ignore correlated candidates. Finalize session as exited.
-    /// </summary>
     public void IgnoreCorrelated(LaunchSession session)
     {
         _events.Add("CorrelatedHandoffIgnored", $"{session.Name}: user ignored correlated candidates");
         FinalizeAsExited(session, "user ignored correlated candidates");
-    }
-
-    private static string? ProxyIdToGeneratedKey(string? proxyId) => proxyId switch
-    {
-        "p10708" => "generated10708",
-        "p10808" => "generated10808",
-        _ => null
-    };
-
-    private static string? ProxyIdToRuleName(string? proxyId) => proxyId switch
-    {
-        "p10708" => "ProxySwitch_10708_AssistedApps",
-        "p10808" => "ProxySwitch_10808_AssistedApps",
-        _ => null
-    };
-
-    private bool IsChildInGeneratedRule(string profileKey, string exeName)
-    {
-        if (!_config.Proxifier.Profiles.TryGetValue(profileKey, out var path)) return false;
-        if (!File.Exists(path)) return false;
-        var ruleName = profileKey switch
-        {
-            "generated10708" => "ProxySwitch_10708_AssistedApps",
-            "generated10808" => "ProxySwitch_10808_AssistedApps",
-            _ => null
-        };
-        if (ruleName == null) return false;
-        return _profileGen.RuleContains(path, ruleName, exeName);
-    }
-
-    /// <summary>
-    /// Add child.exe (and optionally launcher.exe) to the generated Proxifier profile for the session's proxy.
-    /// Then load the generated profile so Proxifier picks up the new rule.
-    /// Returns true if the rule was added or already present and profile loaded.
-    /// </summary>
-    public bool AddAssistRule(LaunchSession session)
-    {
-        var profileKey = ProxyIdToGeneratedKey(session.ProxyId);
-        var ruleName = ProxyIdToRuleName(session.ProxyId);
-        if (profileKey == null || ruleName == null)
-        {
-            _events.Add("AssistRuleFailed", $"{session.Name}: no proxy mapping for {session.ProxyId}");
-            return false;
-        }
-        if (!_config.Proxifier.Profiles.TryGetValue(profileKey, out var profilePath))
-        {
-            _events.Add("AssistRuleFailed", $"{session.Name}: profile key '{profileKey}' not in config");
-            return false;
-        }
-
-        var liveChild = session.Processes.FirstOrDefault(p =>
-            p.ExitedAt == null && (p.Role == "descendant" || p.Role == "correlated"));
-        if (liveChild == null)
-        {
-            _events.Add("AssistRuleFailed", $"{session.Name}: no live descendant or correlated process to add");
-            return false;
-        }
-
-        var launcherName = Path.GetFileName(session.ExePath);
-        var childName = liveChild.Name;
-
-        try
-        {
-            var changed = _profileGen.AddApplicationToRule(profilePath, ruleName, launcherName, childName);
-            if (changed)
-            {
-                _events.Add("AssistRuleAdded", $"{session.Name}: added {childName} to {ruleName} in {Path.GetFileName(profilePath)}");
-            }
-            else
-            {
-                _events.Add("AssistRuleSuggested", $"{session.Name}: {childName} already in {ruleName}");
-            }
-
-            // Load the generated profile
-            _launcher.LoadProxifierProfile(profileKey);
-            _events.Add("GeneratedProfileLoaded", $"{session.Name}: loaded {Path.GetFileName(profilePath)}");
-
-            session.IsRoutingAssisted = true;
-            session.RoutingStatus = "assisted";
-            session.RoutingWarning = null;
-            SessionsChanged?.Invoke();
-            return true;
-        }
-        catch (FileNotFoundException ex)
-        {
-            _events.Add("AssistRuleFailed", $"{session.Name}: {ex.Message}");
-            MessageBox.Show(ex.Message, "Generated Profile Missing",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return false;
-        }
-        catch (Exception ex)
-        {
-            _events.Add("AssistRuleFailed", $"{session.Name}: {ex.Message}");
-            Logger.Error($"AddAssistRule failed: {ex}");
-            MessageBox.Show($"Failed to add assist rule:\n{ex.Message}", "Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return false;
-        }
     }
 
     public void StopSession(LaunchSession session)
@@ -650,7 +472,6 @@ public sealed class SessionManager : IDisposable
         {
             _sessions.Remove(session);
         }
-        // Cancel the descendant monitor task
         CancellationTokenSource? cts = null;
         lock (_sessionCts)
         {
@@ -664,7 +485,6 @@ public sealed class SessionManager : IDisposable
 
     public void Dispose()
     {
-        // Cancel all session monitors
         List<CancellationTokenSource> all;
         lock (_sessionCts)
         {
@@ -675,6 +495,5 @@ public sealed class SessionManager : IDisposable
         {
             try { cts.Cancel(); cts.Dispose(); } catch { }
         }
-        // ProcessMonitor is owned by MainForm, do not dispose here
     }
 }

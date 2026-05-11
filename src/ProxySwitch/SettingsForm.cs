@@ -10,15 +10,15 @@ public class SettingsForm : Form
     private ProxyConfig _config = new();
     private DataGridView _proxyGrid = null!;
     private DataGridView _appGrid = null!;
-    private TextBox _proxifierPath = null!;
+    private DataGridView _backendGrid = null!;
 
     public SettingsForm()
     {
         Text = "ProxySwitch Settings";
-        Size = new Size(720, 520);
+        Size = new Size(820, 560);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
-        MinimumSize = new Size(600, 400);
+        MinimumSize = new Size(680, 440);
 
         LoadConfig();
         BuildUI();
@@ -47,7 +47,7 @@ public class SettingsForm : Form
             Padding = new Point(12, 4)
         };
 
-        // Proxy tab
+        // Proxies tab
         var proxyTab = new TabPage("Proxies");
         _proxyGrid = new DataGridView
         {
@@ -59,9 +59,9 @@ public class SettingsForm : Form
             ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize
         };
         _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", Width = 80 });
-        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 120 });
+        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 160 });
         _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Type", HeaderText = "Type", Width = 80 });
-        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Host", HeaderText = "Host", Width = 100 });
+        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Host", HeaderText = "Host", Width = 110 });
         _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Port", HeaderText = "Port", Width = 60 });
         proxyTab.Controls.Add(_proxyGrid);
         tabs.TabPages.Add(proxyTab);
@@ -85,23 +85,24 @@ public class SettingsForm : Form
         appTab.Controls.Add(_appGrid);
         tabs.TabPages.Add(appTab);
 
-        // Proxifier tab
-        var proxTab = new TabPage("Proxifier");
-        proxTab.Padding = new Padding(12);
-        var proxLayout = new TableLayoutPanel
+        // Routing Backends tab (Clash Verge / v2ray etc.)
+        var backendTab = new TabPage("Routing Backends");
+        _backendGrid = new DataGridView
         {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            ColumnCount = 2,
-            RowCount = 1
+            Dock = DockStyle.Fill,
+            AutoGenerateColumns = false,
+            AllowUserToAddRows = true,
+            AllowUserToDeleteRows = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect
         };
-        proxLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        proxLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        proxLayout.Controls.Add(new Label { Text = "Proxifier exe:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        _proxifierPath = new TextBox { Dock = DockStyle.Fill, Text = _config.Proxifier.Exe };
-        proxLayout.Controls.Add(_proxifierPath, 1, 0);
-        proxTab.Controls.Add(proxLayout);
-        tabs.TabPages.Add(proxTab);
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", Width = 140 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 140 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy ID", Width = 80 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "AppPath", HeaderText = "App Path", Width = 200 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ConfigPath", HeaderText = "Config Path", Width = 200 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "RuleFormat", HeaderText = "Rule Format", Width = 90 });
+        backendTab.Controls.Add(_backendGrid);
+        tabs.TabPages.Add(backendTab);
 
         Controls.Add(tabs);
 
@@ -128,14 +129,14 @@ public class SettingsForm : Form
     {
         _proxyGrid.DataSource = new BindingSource { DataSource = _config.Proxies };
         _appGrid.DataSource = new BindingSource { DataSource = _config.Apps };
+        _backendGrid.DataSource = new BindingSource { DataSource = _config.RoutingBackends };
     }
 
     private void OnSave(object? sender, EventArgs e)
     {
         _proxyGrid.EndEdit();
         _appGrid.EndEdit();
-
-        _config.Proxifier.Exe = _proxifierPath.Text;
+        _backendGrid.EndEdit();
 
         var path = Path.Combine(MainForm.RootPath, "config", "proxyswitch.json");
         var options = new JsonSerializerOptions

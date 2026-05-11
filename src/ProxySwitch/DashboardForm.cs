@@ -13,6 +13,7 @@ public class DashboardForm : Form
     private readonly SessionManager _sessions;
     private readonly EventStore _events;
     private readonly AppLauncher _launcher;
+    private readonly RoutingHintService _hintService;
 
     private FlowLayoutPanel _sessionPanel = null!;
     private ListBox _eventList = null!;
@@ -28,11 +29,12 @@ public class DashboardForm : Form
         _sessions = sessions;
         _events = events;
         _launcher = launcher;
+        _hintService = new RoutingHintService(config);
 
         Text = "ProxySwitch Dashboard";
-        Size = new Size(900, 650);
+        Size = new Size(960, 680);
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(700, 450);
+        MinimumSize = new Size(720, 480);
 
         BuildUI();
 
@@ -55,12 +57,12 @@ public class DashboardForm : Form
             ColumnCount = 1,
             Padding = new Padding(8)
         };
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 100f));   // Launch zones
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50f));    // Pinned apps
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 60f));     // Sessions
-        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 40f));     // Events + Proxy status
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 100f));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50f));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 60f));
+        mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 40f));
 
-        // Row 0: Launch Zones
+        // Row 0: Launch Zones (named after the actual routing backend)
         var zonePanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -70,15 +72,41 @@ public class DashboardForm : Form
         for (int i = 0; i < 3; i++)
             zonePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
 
-        var directZone = new LaunchZoneControl { Title = "Direct", Mode = "direct", AccentColor = Color.FromArgb(200, 200, 200), Dock = DockStyle.Fill, Margin = new Padding(4) };
+        var directZone = new LaunchZoneControl
+        {
+            Title = "Direct",
+            Subtitle = "Drop app — no proxy",
+            Mode = "direct",
+            AccentColor = Color.FromArgb(120, 120, 120),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(4)
+        };
         directZone.FileDropped += path => HandleDrop(path, "direct");
         zonePanel.Controls.Add(directZone, 0, 0);
 
-        var z10708 = new LaunchZoneControl { Title = "10708", Mode = "proxy-10708", AccentColor = Color.FromArgb(34, 197, 94), Dock = DockStyle.Fill, Margin = new Padding(4) };
+        var z10708Label = LabelForProxy("p10708", "10708");
+        var z10708 = new LaunchZoneControl
+        {
+            Title = z10708Label,
+            Subtitle = "External router decides",
+            Mode = "proxy-10708",
+            AccentColor = Color.FromArgb(34, 197, 94),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(4)
+        };
         z10708.FileDropped += path => HandleDrop(path, "proxy-10708");
         zonePanel.Controls.Add(z10708, 1, 0);
 
-        var z10808 = new LaunchZoneControl { Title = "10808", Mode = "proxy-10808", AccentColor = Color.FromArgb(59, 130, 246), Dock = DockStyle.Fill, Margin = new Padding(4) };
+        var z10808Label = LabelForProxy("p10808", "10808");
+        var z10808 = new LaunchZoneControl
+        {
+            Title = z10808Label,
+            Subtitle = "External router decides",
+            Mode = "proxy-10808",
+            AccentColor = Color.FromArgb(59, 130, 246),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(4)
+        };
         z10808.FileDropped += path => HandleDrop(path, "proxy-10808");
         zonePanel.Controls.Add(z10808, 2, 0);
         mainLayout.Controls.Add(zonePanel, 0, 0);
@@ -107,12 +135,7 @@ public class DashboardForm : Form
         mainLayout.Controls.Add(pinnedPanel, 0, 1);
 
         // Row 2: Sessions
-        var sessionGroup = new GroupBox
-        {
-            Text = "Sessions",
-            Dock = DockStyle.Fill,
-            Padding = new Padding(4)
-        };
+        var sessionGroup = new GroupBox { Text = "Sessions", Dock = DockStyle.Fill, Padding = new Padding(4) };
         _sessionPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -123,7 +146,7 @@ public class DashboardForm : Form
         sessionGroup.Controls.Add(_sessionPanel);
         mainLayout.Controls.Add(sessionGroup, 0, 2);
 
-        // Row 3: Proxy Status + Events (side by side)
+        // Row 3: Proxy Status + Events
         var bottomPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -133,7 +156,6 @@ public class DashboardForm : Form
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35f));
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65f));
 
-        // Proxy Status
         var proxyGroup = new GroupBox { Text = "Proxies", Dock = DockStyle.Fill };
         _proxyStatusLabel = new Label
         {
@@ -144,7 +166,6 @@ public class DashboardForm : Form
         proxyGroup.Controls.Add(_proxyStatusLabel);
         bottomPanel.Controls.Add(proxyGroup, 0, 0);
 
-        // Events
         var eventGroup = new GroupBox { Text = "Events", Dock = DockStyle.Fill };
         _eventList = new ListBox
         {
@@ -162,6 +183,15 @@ public class DashboardForm : Form
         RefreshEvents();
     }
 
+    private string LabelForProxy(string proxyId, string fallback)
+    {
+        var p = _config.Proxies.FirstOrDefault(x => x.Id == proxyId);
+        if (p != null && !string.IsNullOrEmpty(p.Name)) return p.Name;
+        var backend = _config.RoutingBackends.FirstOrDefault(b => b.ProxyId == proxyId);
+        if (backend != null && !string.IsNullOrEmpty(backend.Name)) return $"{backend.Name} {p?.Port ?? 0}";
+        return fallback;
+    }
+
     private void HandleDrop(string exePath, string mode)
     {
         var name = Path.GetFileNameWithoutExtension(exePath);
@@ -172,42 +202,24 @@ public class DashboardForm : Form
             _ => null
         };
 
-        bool profileLoaded = false;
-
-        // Try to auto-load matching Proxifier profile before launching
-        if (mode != "direct" && _config.Proxifier.Enabled)
+        if (mode != "direct" && proxyId != null)
         {
-            var profileKey = proxyId switch
-            {
-                "p10708" => "all10708",
-                "p10808" => "all10808",
-                _ => null
-            };
+            var label = LabelForProxy(proxyId, proxyId);
+            var result = MessageBox.Show(
+                $"Launch {name} with {label} intent.\n\n" +
+                $"ProxySwitch will start the app and monitor the session, but it does NOT route the traffic itself. " +
+                $"Routing is handled by your external router (e.g. Clash Verge / v2ray).\n\n" +
+                $"⚠ For launcher-style apps (Steam, Epic, game clients), child processes spawned afterwards are " +
+                $"not automatically covered by the router's rules unless those rules match the child executable too.\n\n" +
+                $"Continue?",
+                "Confirm Launch",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information);
 
-            if (!string.IsNullOrEmpty(profileKey) &&
-                _config.Proxifier.Profiles.TryGetValue(profileKey, out var profilePath) &&
-                File.Exists(profilePath))
-            {
-                _launcher.LoadProxifierProfile(profileKey);
-                profileLoaded = true;
-            }
-            else
-            {
-                var result = MessageBox.Show(
-                    $"No matching Proxifier profile found for {mode}.\n" +
-                    $"ProxySwitch will start the app but traffic routing is unverified.\n\n" +
-                    $"⚠ Launcher apps (Steam / Epic / game clients) start child processes that Proxifier rules do not auto-apply to. " +
-                    $"Confirm your Proxifier profile covers the target.\n\n" +
-                    $"Run {name} anyway?",
-                    "Confirm Launch",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-
-                if (result != DialogResult.Yes) return;
-            }
+            if (result != DialogResult.Yes) return;
         }
 
-        _sessions.LaunchGeneric(exePath, name, mode, proxyId, profileLoaded);
+        _sessions.LaunchGeneric(exePath, name, mode, proxyId);
     }
 
     private void LaunchPinned(AppConfig app)
@@ -242,7 +254,6 @@ public class DashboardForm : Form
     private void RefreshSessions()
     {
         var sessions = _sessions.GetSessions();
-
         bool structureMatches = _sessionPanel.Controls.Count == sessions.Count;
         if (structureMatches)
         {
@@ -275,45 +286,33 @@ public class DashboardForm : Form
 
     private static string GetSessionTag(LaunchSession session)
     {
-        // Tag includes status + warning presence + assist state so card rebuilds when any change
-        var hasWarning = !string.IsNullOrEmpty(session.RoutingWarning) && !session.IsRoutingAssisted;
-        return $"{session.Status}|{hasWarning}|{session.IsRoutingAssisted}";
+        return $"{session.Status}|{session.RoutingStatus}|{session.LiveProcessCount}";
     }
 
     private Panel CreateSessionCard(LaunchSession session)
     {
-        var hasWarning = !string.IsNullOrEmpty(session.RoutingWarning) && !session.IsRoutingAssisted;
         var card = new Panel
         {
             Width = _sessionPanel.Width - 30,
-            Height = hasWarning ? 100 : 60,
+            Height = 64,
             Margin = new Padding(4),
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = GetSessionColor(session.Status)
         };
 
-        var rootLayout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = hasWarning ? 2 : 1
-        };
-        rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
-        if (hasWarning) rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 4,
+            ColumnCount = 5,
             RowCount = 1,
             Padding = new Padding(4)
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30f));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 18f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22f));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20f));
 
-        // Name + Mode
         var nameLbl = new Label
         {
             Text = $"{session.Name}\n{session.Mode}",
@@ -322,7 +321,6 @@ public class DashboardForm : Form
         };
         layout.Controls.Add(nameLbl, 0, 0);
 
-        // Status + Duration
         var statusLbl = new Label
         {
             Text = $"{FormatStatus(session)}\n{session.DurationText}",
@@ -330,18 +328,25 @@ public class DashboardForm : Form
         };
         layout.Controls.Add(statusLbl, 1, 0);
 
-        // PID / Process count
-        var liveCount = session.Processes.Count(p => p.ExitedAt == null);
+        var routingLbl = new Label
+        {
+            Text = $"Routing\n{FormatRouting(session)}",
+            Dock = DockStyle.Fill,
+            ForeColor = RoutingColor(session.RoutingStatus),
+            Font = new Font(Font.FontFamily, 8.5f)
+        };
+        layout.Controls.Add(routingLbl, 2, 0);
+
+        var liveCount = session.LiveProcessCount;
         var pidLbl = new Label
         {
             Text = liveCount > 1
-                ? $"Processes: {liveCount}\n{session.RoutingStatus}"
-                : $"PID: {session.LiveProcessId?.ToString() ?? session.RootProcessId?.ToString() ?? "?"}\n{session.RoutingStatus}",
+                ? $"Processes: {liveCount}"
+                : $"PID: {session.LiveProcessId?.ToString() ?? session.RootProcessId?.ToString() ?? "?"}",
             Dock = DockStyle.Fill
         };
-        layout.Controls.Add(pidLbl, 2, 0);
+        layout.Controls.Add(pidLbl, 3, 0);
 
-        // Actions
         var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
         var isLive = session.Status is "running" or "running-via-child" or "running-via-correlated";
         var isChecking = session.Status == "checking-correlated";
@@ -355,11 +360,18 @@ public class DashboardForm : Form
                     _sessions.StopSession(session);
             };
             btnPanel.Controls.Add(stopBtn);
+
+            // Copy Rule Hint — only meaningful when proxy intent is set
+            if (session.RoutingStatus == "external-routing-required")
+            {
+                var hintBtn = new Button { Text = "Copy Rule Hint", AutoSize = true, Height = 24 };
+                hintBtn.Click += (_, _) => CopyRuleHint(session);
+                btnPanel.Controls.Add(hintBtn);
+            }
         }
         else if (isChecking)
         {
-            var checkingLbl = new Label { Text = "Detecting...", AutoSize = true, ForeColor = Color.SteelBlue };
-            btnPanel.Controls.Add(checkingLbl);
+            btnPanel.Controls.Add(new Label { Text = "Detecting...", AutoSize = true, ForeColor = Color.SteelBlue });
         }
         else
         {
@@ -367,41 +379,9 @@ public class DashboardForm : Form
             removeBtn.Click += (_, _) => _sessions.RemoveSession(session);
             btnPanel.Controls.Add(removeBtn);
         }
-        layout.Controls.Add(btnPanel, 3, 0);
+        layout.Controls.Add(btnPanel, 4, 0);
 
-        rootLayout.Controls.Add(layout, 0, 0);
-
-        // Assist warning row
-        if (hasWarning)
-        {
-            var warnPanel = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                RowCount = 1,
-                BackColor = Color.FromArgb(254, 243, 199),
-                Padding = new Padding(4)
-            };
-            warnPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70f));
-            warnPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30f));
-
-            var warnLbl = new Label
-            {
-                Text = "⚠ " + session.RoutingWarning,
-                Dock = DockStyle.Fill,
-                ForeColor = Color.FromArgb(146, 64, 14),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-            warnPanel.Controls.Add(warnLbl, 0, 0);
-
-            var addRuleBtn = new Button { Text = "Add Rule", AutoSize = true, Height = 24, Anchor = AnchorStyles.Right };
-            addRuleBtn.Click += (_, _) => HandleAddRule(session);
-            warnPanel.Controls.Add(addRuleBtn, 1, 0);
-
-            rootLayout.Controls.Add(warnPanel, 0, 1);
-        }
-
-        card.Controls.Add(rootLayout);
+        card.Controls.Add(layout);
         return card;
     }
 
@@ -416,46 +396,27 @@ public class DashboardForm : Form
         _ => session.Status
     };
 
-    private void HandleAddRule(LaunchSession session)
+    private static string FormatRouting(LaunchSession session) => session.RoutingStatus switch
     {
-        var liveChild = session.Processes.FirstOrDefault(p =>
-            p.ExitedAt == null && (p.Role == "descendant" || p.Role == "correlated"));
-        if (liveChild == null) return;
+        "direct" => "Direct",
+        "browser-proxy-active" => "Browser proxy",
+        "external-routing-required" => "External router",
+        _ => session.RoutingStatus
+    };
 
-        var launcherName = Path.GetFileName(session.ExePath);
-        var proxyLabel = session.ProxyId switch
-        {
-            "p10708" => "10708",
-            "p10808" => "10808",
-            _ => session.ProxyId ?? "?"
-        };
-
-        var result = MessageBox.Show(
-            $"Add {launcherName} and {liveChild.Name} to the {proxyLabel} assist rule?\n\n" +
-            $"This will update the generated-{proxyLabel}.ppx Proxifier profile (rule: ProxySwitch_{proxyLabel}_AssistedApps) " +
-            $"to include both executables, then load the generated profile.\n\n" +
-            $"⚠ The rule is executable-based, NOT PID-isolated. Other instances of {liveChild.Name} elsewhere may also be routed through {proxyLabel}.\n\n" +
-            $"Prerequisite: You must have already created the generated profile in Proxifier with the rule name 'ProxySwitch_{proxyLabel}_AssistedApps'.",
-            "Add Assist Rule",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
-
-        if (result == DialogResult.Yes)
-        {
-            _sessions.AddAssistRule(session);
-        }
-    }
+    private static Color RoutingColor(string routingStatus) => routingStatus switch
+    {
+        "browser-proxy-active" => Color.FromArgb(22, 101, 52),
+        "external-routing-required" => Color.FromArgb(146, 64, 14),
+        _ => Color.DimGray
+    };
 
     private void UpdateSessionCard(Control control, LaunchSession session)
     {
         if (control is not Panel card) return;
         card.BackColor = GetSessionColor(session.Status);
 
-        // card.Controls[0] is rootLayout (TableLayoutPanel), [0,0] is the main layout
-        var rootLayout = card.Controls[0] as TableLayoutPanel;
-        if (rootLayout == null) return;
-
-        var layout = rootLayout.GetControlFromPosition(0, 0) as TableLayoutPanel;
+        var layout = card.Controls[0] as TableLayoutPanel;
         if (layout == null) return;
 
         var nameLbl = layout.GetControlFromPosition(0, 0) as Label;
@@ -464,26 +425,63 @@ public class DashboardForm : Form
         var statusLbl = layout.GetControlFromPosition(1, 0) as Label;
         if (statusLbl != null) statusLbl.Text = $"{FormatStatus(session)}\n{session.DurationText}";
 
-        var pidLbl = layout.GetControlFromPosition(2, 0) as Label;
+        var routingLbl = layout.GetControlFromPosition(2, 0) as Label;
+        if (routingLbl != null)
+        {
+            routingLbl.Text = $"Routing\n{FormatRouting(session)}";
+            routingLbl.ForeColor = RoutingColor(session.RoutingStatus);
+        }
+
+        var pidLbl = layout.GetControlFromPosition(3, 0) as Label;
         if (pidLbl != null)
         {
-            var liveCount = session.Processes.Count(p => p.ExitedAt == null);
+            var liveCount = session.LiveProcessCount;
             pidLbl.Text = liveCount > 1
-                ? $"Processes: {liveCount}\n{session.RoutingStatus}"
-                : $"PID: {session.LiveProcessId?.ToString() ?? session.RootProcessId?.ToString() ?? "?"}\n{session.RoutingStatus}";
+                ? $"Processes: {liveCount}"
+                : $"PID: {session.LiveProcessId?.ToString() ?? session.RootProcessId?.ToString() ?? "?"}";
         }
     }
 
     private static Color GetSessionColor(string status) => status switch
     {
-        "running" => Color.FromArgb(220, 252, 231),               // light green
-        "running-via-child" => Color.FromArgb(254, 249, 195),     // light yellow
-        "running-via-correlated" => Color.FromArgb(254, 215, 170), // light orange
-        "checking-correlated" => Color.FromArgb(219, 234, 254),   // light blue
-        "exited" => Color.FromArgb(243, 244, 246),                // light gray
-        "failed" => Color.FromArgb(254, 226, 226),                // light red
+        "running" => Color.FromArgb(220, 252, 231),
+        "running-via-child" => Color.FromArgb(254, 249, 195),
+        "running-via-correlated" => Color.FromArgb(254, 215, 170),
+        "checking-correlated" => Color.FromArgb(219, 234, 254),
+        "exited" => Color.FromArgb(243, 244, 246),
+        "failed" => Color.FromArgb(254, 226, 226),
         _ => Color.White
     };
+
+    private void CopyRuleHint(LaunchSession session)
+    {
+        try
+        {
+            var hint = _hintService.BuildHintForSession(session);
+            Clipboard.SetText(hint);
+            _events.Add("RuleHintCopied", $"{session.Name}: rule hint copied to clipboard");
+            MessageBox.Show(
+                $"Rule hint copied to clipboard.\n\n" +
+                $"Paste it into your external router's rules section ({GetRuleFormatFor(session)}). " +
+                $"ProxySwitch does NOT apply this automatically.",
+                "Rule Hint Copied", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Copy rule hint failed: {ex.Message}");
+            MessageBox.Show($"Failed to copy hint:\n{ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private string GetRuleFormatFor(LaunchSession session)
+    {
+        var backend = _config.RoutingBackends.FirstOrDefault(b => b.ProxyId == session.ProxyId);
+        return backend?.RuleFormat?.ToLowerInvariant() switch
+        {
+            "v2ray" => "v2ray routing.rules",
+            _ => "Clash rules"
+        };
+    }
 
     private void RefreshEvents()
     {
@@ -504,7 +502,7 @@ public class DashboardForm : Form
             {
                 var latency = status.LatencyMs.HasValue ? $"{status.LatencyMs}ms" : "timeout";
                 var lastCheck = status.LastCheckedAt?.ToString("HH:mm:ss") ?? "never";
-                lines.Add($"{proxy.Port}: {status.Status.ToUpper()} ({latency}, checked {lastCheck})");
+                lines.Add($"{proxy.Name}: {status.Status.ToUpper()} ({latency}, checked {lastCheck})");
             }
         }
         _proxyStatusLabel.Text = string.Join("\n", lines);
@@ -525,7 +523,6 @@ public class DashboardForm : Form
     {
         if (InvokeRequired) { Invoke(() => OnCorrelatedCandidatesFound(session, candidates)); return; }
 
-        // Reentrancy guard: queue if a dialog is already open
         if (_correlatedDialogOpen)
         {
             _pendingCorrelated.Enqueue((session, candidates));
@@ -548,15 +545,12 @@ public class DashboardForm : Form
             }
             else
             {
-                // X close, Cancel, or explicit Ignore → all finalize as exited.
-                // Leaving session in "checking-correlated" indefinitely is worse UX.
                 _sessions.IgnoreCorrelated(session);
             }
         }
         finally
         {
             _correlatedDialogOpen = false;
-            // Process next queued, if any
             if (_pendingCorrelated.Count > 0)
             {
                 var next = _pendingCorrelated.Dequeue();

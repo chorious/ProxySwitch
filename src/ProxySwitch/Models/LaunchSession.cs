@@ -6,7 +6,7 @@ public sealed class LaunchSession
     public string Name { get; init; } = "";
     public string ExePath { get; init; } = "";
     public string Kind { get; init; } = "generic"; // "browser" or "generic"
-    public string Mode { get; init; } = "direct"; // direct, proxy
+    public string Mode { get; init; } = "direct";  // direct, proxy, browser-direct, browser-proxy
     public string? ProxyId { get; init; }
     public string? UserDataDir { get; init; }
     public DateTime StartedAt { get; init; } = DateTime.Now;
@@ -14,11 +14,24 @@ public sealed class LaunchSession
     public int? RootProcessId { get; set; }
     public DateTime? RootCreatedAt { get; set; }
     public List<TrackedProcess> Processes { get; } = [];
-    public string Status { get; set; } = "starting"; // starting, running, running-via-child, exited, failed
-    public string RoutingStatus { get; set; } = "unknown"; // unknown, direct, browser-arg, profile-loaded, assisted, unverified
+    public string Status { get; set; } = "starting";
+    // starting / running / running-via-child / running-via-correlated / checking-correlated / exited / failed
+
+    /// <summary>
+    /// Routing semantics under the v0.5 "Routing Decoupled" model:
+    ///   "direct"                     — no proxy intent, browser --no-proxy-server or generic direct
+    ///   "browser-proxy-active"       — browser launched with --proxy-server, routing controlled by us
+    ///   "external-routing-required"  — generic app + proxy intent, routing handled by external router (Clash Verge / v2ray)
+    /// ProxySwitch NEVER claims routing is verified for the generic case.
+    /// </summary>
+    public string RoutingStatus { get; set; } = "direct";
+
+    /// <summary>
+    /// Whether root process exited but a descendant or correlated process is still alive.
+    /// Pure observability — no routing implication.
+    /// </summary>
     public bool IsLauncherHandoffDetected { get; set; }
-    public bool IsRoutingAssisted { get; set; }
-    public string? RoutingWarning { get; set; }
+
     public string? LastError { get; set; }
 
     public int? LiveProcessId
@@ -29,7 +42,6 @@ public sealed class LaunchSession
             {
                 var live = Processes.Where(p => p.ExitedAt == null).ToList();
                 if (live.Count == 0) return null;
-                // Prefer root if still alive, otherwise the earliest descendant
                 var root = live.FirstOrDefault(p => p.Role == "root");
                 if (root != null) return root.ProcessId;
                 return live.FirstOrDefault()?.ProcessId;

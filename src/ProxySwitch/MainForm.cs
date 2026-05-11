@@ -28,7 +28,7 @@ public class MainForm : Form
         SetupServices();
         BuildMenu();
         _tray.Visible = true;
-        Logger.Info("ProxySwitch v0.3 started");
+        Logger.Info("ProxySwitch v0.5 started");
     }
 
     private void InitializeComponent()
@@ -60,7 +60,7 @@ public class MainForm : Form
         {
             var json = File.ReadAllText(path);
             _config = JsonSerializer.Deserialize<ProxyConfig>(json) ?? new ProxyConfig();
-            Logger.Info($"Config loaded, proxies={_config.Proxies.Count}, apps={_config.Apps.Count}");
+            Logger.Info($"Config loaded, proxies={_config.Proxies.Count}, apps={_config.Apps.Count}, backends={_config.RoutingBackends.Count}");
         }
         catch (Exception ex)
         {
@@ -102,11 +102,9 @@ public class MainForm : Form
     {
         _menu = new ContextMenuStrip();
 
-        // Open Dashboard
         _menu.Items.Add("Open Dashboard", null, (_, _) => ShowDashboard());
         _menu.Items.Add(new ToolStripSeparator());
 
-        // Quick Launch (pinned apps)
         if (_config.Apps.Count > 0)
         {
             var quick = new ToolStripMenuItem("Quick Launch");
@@ -131,28 +129,22 @@ public class MainForm : Form
         _menu.Items.Add(statusItem);
         _menu.Items.Add(new ToolStripSeparator());
 
-        // Proxifier Profile
-        if (_config.Proxifier.Enabled && _config.Proxifier.Profiles.Count > 0)
+        // Routing backends (Clash Verge / v2ray): open app / open config
+        if (_config.RoutingBackends.Count > 0)
         {
-            var prof = new ToolStripMenuItem("Proxifier Profile");
-            if (!string.IsNullOrEmpty(_config.LastProfile) &&
-                _config.Proxifier.Profiles.ContainsKey(_config.LastProfile))
+            var routing = new ToolStripMenuItem("Routing");
+            foreach (var backend in _config.RoutingBackends)
             {
-                prof.DropDownItems.Add($"Reload Last: {_config.LastProfile}", null,
-                    (_, _) => LoadProfile(_config.LastProfile!));
-                prof.DropDownItems.Add(new ToolStripSeparator());
+                var b = backend;
+                var sub = new ToolStripMenuItem(b.Name);
+                sub.DropDownItems.Add("Open App", null, (_, _) => _launcher.OpenRoutingApp(b.ProxyId));
+                sub.DropDownItems.Add("Open Config", null, (_, _) => _launcher.OpenRoutingConfig(b.ProxyId));
+                routing.DropDownItems.Add(sub);
             }
-            foreach (var kv in _config.Proxifier.Profiles)
-            {
-                var name = kv.Key;
-                prof.DropDownItems.Add(name, null, (_, _) => LoadProfile(kv.Key));
-            }
-            _menu.Items.Add(prof);
+            _menu.Items.Add(routing);
             _menu.Items.Add(new ToolStripSeparator());
         }
 
-        // Tools
-        _menu.Items.Add("Open Proxifier", null, (_, _) => _launcher.OpenProxifier());
         _menu.Items.Add("Settings...", null, (_, _) =>
         {
             using var form = new SettingsForm();
@@ -214,39 +206,6 @@ public class MainForm : Form
         }
         var hIcon = bmp.GetHicon();
         return Icon.FromHandle(hIcon);
-    }
-
-    private void LoadProfile(string key)
-    {
-        _launcher.LoadProxifierProfile(key);
-        _events.Add("ProfileLoaded", $"Loaded profile: {key}");
-
-        if (_config.LastProfile != key)
-        {
-            _config.LastProfile = key;
-            SaveConfig();
-            BuildMenu();
-        }
-    }
-
-    private void SaveConfig()
-    {
-        var path = Path.Combine(RootPath, "config", "proxyswitch.json");
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-        };
-        try
-        {
-            var json = JsonSerializer.Serialize(_config, options);
-            File.WriteAllText(path, json);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"Save config failed: {ex.Message}");
-        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

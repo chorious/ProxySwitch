@@ -2,14 +2,14 @@
   "proxies": [
     {
       "id": "p10708",
-      "name": "Local 10708",
+      "name": "Clash Verge 10708",
       "type": "socks5",
       "host": "127.0.0.1",
       "port": 10708
     },
     {
       "id": "p10808",
-      "name": "Local 10808",
+      "name": "v2ray 10808",
       "type": "socks5",
       "host": "127.0.0.1",
       "port": 10808
@@ -25,7 +25,7 @@
     },
     {
       "id": "chrome-10708",
-      "name": "Chrome via 10708",
+      "name": "Chrome via Clash Verge 10708",
       "exe": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "mode": "browser-proxy",
       "proxyId": "p10708",
@@ -33,7 +33,7 @@
     },
     {
       "id": "chrome-10808",
-      "name": "Chrome via 10808",
+      "name": "Chrome via v2ray 10808",
       "exe": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "mode": "browser-proxy",
       "proxyId": "p10808",
@@ -48,23 +48,52 @@
     },
     {
       "id": "edge-10708",
-      "name": "Edge via 10708",
+      "name": "Edge via Clash Verge 10708",
       "exe": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
       "mode": "browser-proxy",
       "proxyId": "p10708",
       "userDataDir": "E:\\proxyswitch\\profiles\\edge-10708"
     }
   ],
-  "proxifier": {
-    "enabled": true,
-    "exe": "C:\\Program Files (x86)\\Proxifier\\Proxifier.exe",
-    "profiles": {
-      "direct": "E:\\proxyswitch\\profiles\\proxifier\\direct.ppx",
-      "all10708": "E:\\proxyswitch\\profiles\\proxifier\\all-10708.ppx",
-      "all10808": "E:\\proxyswitch\\profiles\\proxifier\\all-10808.ppx",
-      "mixed": "E:\\proxyswitch\\profiles\\proxifier\\mixed-rules.ppx",
-      "generated10708": "E:\\proxyswitch\\profiles\\proxifier\\generated-10708.ppx",
-      "generated10808": "E:\\proxyswitch\\profiles\\proxifier\\generated-10808.ppx"
+  "routingBackends": [
+    {
+      "id": "clash-verge-10708",
+      "name": "Clash Verge",
+      "proxyId": "p10708",
+      "appPath": "",
+      "configPath": "%APPDATA%\\io.github.clash-verge-rev",
+      "ruleFormat": "clash"
+    },
+    {
+      "id": "v2ray-10808",
+      "name": "v2ray",
+      "proxyId": "p10808",
+      "appPath": "",
+      "configPath": "",
+      "ruleFormat": "v2ray"
     }
-  }
+  ],
+  "routingHints": {
+    "clashPolicyName": "Proxy",
+    "v2rayOutboundTag": "proxy"
+  },
+  "ruleHintPresets": [
+    {
+      "id": "obsidian-community-plugins",
+      "name": "Obsidian Community Plugins",
+      "description": "Routes Obsidian and the GitHub-hosted plugin marketplace endpoints.",
+      "applications": ["Obsidian.exe"],
+      "domains": [
+        "plugins.obsidian.md",
+        "obsidian.md",
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "codeload.github.com"
+      ],
+      "domainSuffixes": [
+        "github.com"
+      ]
+    }
+  ]
 }

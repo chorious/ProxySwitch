@@ -102,65 +102,79 @@ public class AppLauncher
         return sb.ToString();
     }
 
-    public void OpenProxifier()
+    /// <summary>
+    /// Open the routing backend's app (Clash Verge / v2ray GUI) for the given proxy.
+    /// ProxySwitch does NOT modify their config — user does it themselves.
+    /// </summary>
+    public bool OpenRoutingApp(string proxyId)
     {
-        if (!_config.Proxifier.Enabled) return;
-        if (!File.Exists(_config.Proxifier.Exe))
+        var backend = _config.RoutingBackends.FirstOrDefault(b => b.ProxyId == proxyId);
+        if (backend == null || string.IsNullOrEmpty(backend.AppPath))
         {
-            Logger.Error($"Proxifier not found: {_config.Proxifier.Exe}");
-            MessageBox.Show($"Proxifier not found:\n{_config.Proxifier.Exe}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
+            MessageBox.Show(
+                $"No routing backend app configured for {proxyId}.\n\n" +
+                "Open Settings → Routing Backends and set the App Path for this proxy.",
+                "Routing Backend Not Configured", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return false;
         }
-
+        if (!File.Exists(backend.AppPath))
+        {
+            MessageBox.Show(
+                $"Routing backend app not found:\n{backend.AppPath}",
+                "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = _config.Proxifier.Exe,
-                UseShellExecute = true
-            });
-            Logger.Info("Opened Proxifier");
+            Process.Start(new ProcessStartInfo { FileName = backend.AppPath, UseShellExecute = true });
+            Logger.Info($"Opened routing app: {backend.Name} ({backend.AppPath})");
+            return true;
         }
         catch (Exception ex)
         {
-            Logger.Error($"Failed to open Proxifier: {ex.Message}");
+            Logger.Error($"Failed to open routing app {backend.Name}: {ex.Message}");
+            return false;
         }
     }
 
-    public void LoadProxifierProfile(string profileKey)
+    /// <summary>
+    /// Open the routing backend's config folder / file in Explorer.
+    /// </summary>
+    public bool OpenRoutingConfig(string proxyId)
     {
-        if (!_config.Proxifier.Enabled) return;
-        if (!_config.Proxifier.Profiles.TryGetValue(profileKey, out var path))
+        var backend = _config.RoutingBackends.FirstOrDefault(b => b.ProxyId == proxyId);
+        if (backend == null || string.IsNullOrEmpty(backend.ConfigPath))
         {
-            Logger.Error($"Profile not found: {profileKey}");
-            return;
-        }
-        if (!File.Exists(path))
-        {
-            Logger.Error($"Profile file not found: {path}");
-            MessageBox.Show($"Profile file not found:\n{path}\n\nCreate it in Proxifier and export to this location.", "Profile Missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
+            MessageBox.Show(
+                $"No config path configured for {proxyId}.\n\n" +
+                "Open Settings → Routing Backends and set the Config Path for this proxy.",
+                "Routing Config Not Configured", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return false;
         }
 
-        if (!File.Exists(_config.Proxifier.Exe))
+        var expanded = Environment.ExpandEnvironmentVariables(backend.ConfigPath);
+        if (!Directory.Exists(expanded) && !File.Exists(expanded))
         {
-            Logger.Error($"Proxifier not found: {_config.Proxifier.Exe}");
-            return;
+            MessageBox.Show(
+                $"Config path does not exist:\n{expanded}",
+                "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
         }
-
         try
         {
             Process.Start(new ProcessStartInfo
             {
-                FileName = _config.Proxifier.Exe,
-                Arguments = $"\"{path}\"",
+                FileName = "explorer.exe",
+                Arguments = $"\"{expanded}\"",
                 UseShellExecute = true
             });
-            Logger.Info($"Loaded Proxifier profile: {profileKey}");
+            Logger.Info($"Opened routing config: {backend.Name} ({expanded})");
+            return true;
         }
         catch (Exception ex)
         {
-            Logger.Error($"Failed to load profile {profileKey}: {ex.Message}");
+            Logger.Error($"Failed to open routing config {backend.Name}: {ex.Message}");
+            return false;
         }
     }
 }
