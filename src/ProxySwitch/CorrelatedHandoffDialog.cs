@@ -17,7 +17,7 @@ public class CorrelatedHandoffDialog : Form
     {
         _candidates = candidates;
         Text = $"Confirm Handoff: {session.Name}";
-        Size = new Size(720, 480);
+        Size = new Size(740, 520);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -28,16 +28,27 @@ public class CorrelatedHandoffDialog : Form
 
     private void BuildUI(LaunchSession session)
     {
+        // Use a single TableLayoutPanel as the root — avoids the Dock add-order
+        // pitfall where Fill consumes space before Top/Bottom siblings are added.
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64f));    // top label
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));    // candidate list
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52f));    // button row
+
         var topLbl = new Label
         {
             Text = $"{Path.GetFileName(session.ExePath)} exited. ProxySwitch detected the following processes that may be the launched app.\n" +
-                   $"Confidence is heuristic — select one only if you recognize it as the right target.",
-            Dock = DockStyle.Top,
-            Padding = new Padding(12, 12, 12, 8),
-            AutoSize = false,
-            Height = 60
+                   "Confidence is heuristic — select one only if you recognize it as the right target.",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(12, 12, 12, 4),
+            AutoSize = false
         };
-        Controls.Add(topLbl);
+        root.Controls.Add(topLbl, 0, 0);
 
         var listPanel = new FlowLayoutPanel
         {
@@ -45,22 +56,17 @@ public class CorrelatedHandoffDialog : Form
             FlowDirection = FlowDirection.TopDown,
             AutoScroll = true,
             WrapContents = false,
-            Padding = new Padding(12, 0, 12, 0)
+            Padding = new Padding(12, 4, 12, 4)
         };
-
         foreach (var cand in _candidates.Take(5))
-        {
             listPanel.Controls.Add(BuildCandidateRow(cand));
-        }
-        Controls.Add(listPanel);
+        root.Controls.Add(listPanel, 0, 1);
 
-        // Buttons
         var btnPanel = new FlowLayoutPanel
         {
-            Dock = DockStyle.Bottom,
+            Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(8),
-            Height = 50
+            Padding = new Padding(8)
         };
 
         var ignoreBtn = new Button { Text = "Ignore", AutoSize = true };
@@ -99,15 +105,17 @@ public class CorrelatedHandoffDialog : Form
         btnPanel.Controls.Add(ignoreBtn);
         btnPanel.Controls.Add(_trackBtn);
         btnPanel.Controls.Add(_openBtn);
-        Controls.Add(btnPanel);
+        root.Controls.Add(btnPanel, 0, 2);
+
+        Controls.Add(root);
     }
 
     private Panel BuildCandidateRow(HandoffCandidate cand)
     {
         var row = new Panel
         {
-            Width = 660,
-            Height = 80,
+            Width = 680,
+            Height = 84,
             Margin = new Padding(0, 4, 0, 4),
             BorderStyle = BorderStyle.FixedSingle,
             BackColor = cand.Confidence == "high"
@@ -118,7 +126,7 @@ public class CorrelatedHandoffDialog : Form
         var rb = new RadioButton
         {
             Text = $"{cand.Process.Name}  (PID {cand.Process.ProcessId})",
-            Location = new Point(8, 8),
+            Location = new Point(8, 6),
             AutoSize = true,
             Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold)
         };
@@ -133,7 +141,7 @@ public class CorrelatedHandoffDialog : Form
         var scoreLbl = new Label
         {
             Text = $"Score: {cand.Score}  ({cand.Confidence})",
-            Location = new Point(450, 8),
+            Location = new Point(490, 6),
             AutoSize = true,
             ForeColor = cand.Confidence == "high" ? Color.DarkGreen : Color.DarkOrange,
             Font = new Font(Font.FontFamily, 9f, FontStyle.Bold)
@@ -143,8 +151,8 @@ public class CorrelatedHandoffDialog : Form
         var pathLbl = new Label
         {
             Text = cand.Process.ExecutablePath ?? "(no path)",
-            Location = new Point(28, 28),
-            Width = 620,
+            Location = new Point(28, 30),
+            Width = 640,
             AutoEllipsis = true,
             ForeColor = Color.DimGray,
             Font = new Font(Font.FontFamily, 8.5f)
@@ -154,8 +162,8 @@ public class CorrelatedHandoffDialog : Form
         var reasonsLbl = new Label
         {
             Text = "Reasons: " + string.Join(", ", cand.Reasons),
-            Location = new Point(28, 48),
-            Width = 620,
+            Location = new Point(28, 52),
+            Width = 640,
             Height = 28,
             ForeColor = Color.DimGray,
             Font = new Font(Font.FontFamily, 8f)
