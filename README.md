@@ -89,6 +89,7 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.7.3 | ✅ | Launch-first / apply-async — drop 后 app 立刻起来,UAC+sc 重启走后台 task,卡片走 launching(红) → restarting(橙) → active(绿) + 托盘气泡;WaitForStatus 10s → 30s 消假阳 |
 | v0.8.0 | ✅ | Stitch UI refresh — Theme tokens + IconRenderer + LaunchZoneControl 重写 + PillButton(Region 裁角) + Pinned pill + StatusStrip + Sections + DataGridView Sessions + 深色 Events 控制台 + 顶部 tab strip + SettingsForm SplitContainer 左 rail + LaunchConfirmDialog/RouteChild/CorrelatedHandoff Stitch 风格 |
 | v0.8.1 | ✅ | Opus review v0.8.0 修复 — + Add Pinned 走共享 OpenSettings(ReloadRuntimeServices 不再被绕过) / Actions cell 命中测试字体一致 / OpenSettings 加 owner(Dashboard 路径 Z-order + taskbar 正确) / Actions cell font 缓存重用(消除每帧 GDI alloc) / IconRenderer using var 统一 |
+| v0.8.2 | ✅ | UI 截断/列溢出修复 — PillButton GetPreferredSize 算 AccentDot + NoPadding flag(Pinned Apps 文字不再被截) / Settings Apps/Backends/Routes 三个 grid 改 Fill+MinimumWidth(不再溢视口) / DataGridView WrapMode=False / SettingsForm 默认尺寸 960×600 |
 | v0.9 | 📋 | 自动发现应用路径、应用规则预设 |
 | v1.0 | 📋 | 安装包、开机自启 |
 

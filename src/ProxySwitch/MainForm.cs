@@ -30,7 +30,7 @@ public class MainForm : Form
         SetupServices();
         BuildMenu();
         _tray.Visible = true;
-        Logger.Info("ProxySwitch v0.8.1 started");
+        Logger.Info("ProxySwitch v0.8.2 started");
     }
 
     private void InitializeComponent()

@@ -31,10 +31,10 @@ public class SettingsForm : Form
     public SettingsForm()
     {
         Text = "ProxySwitch Settings";
-        Size = new Size(820, 560);
+        Size = new Size(960, 600);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
-        MinimumSize = new Size(720, 480);
+        MinimumSize = new Size(820, 480);
         BackColor = UI.Theme.WindowBg;
         Font = UI.Theme.BodyFont;
         ForeColor = UI.Theme.TextPrimary;
@@ -272,11 +272,17 @@ public class SettingsForm : Form
         grid.DefaultCellStyle.SelectionBackColor = UI.Theme.HoverTint;
         grid.DefaultCellStyle.SelectionForeColor = UI.Theme.TextPrimary;
         grid.DefaultCellStyle.Padding = new Padding(6, 4, 6, 4);
+        // Single-line cells with EndEllipsis (DataGridView default for non-wrap).
+        // WrapMode=NotSet would let some Fill columns auto-grow row height when
+        // their content overflows — pin to False to keep rows uniform 32px.
+        // (v0.8.2 patch)
+        grid.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
 
         grid.AlternatingRowsDefaultCellStyle.BackColor = UI.Theme.SurfaceContainerLow;
         grid.AlternatingRowsDefaultCellStyle.ForeColor = UI.Theme.TextPrimary;
         grid.AlternatingRowsDefaultCellStyle.SelectionBackColor = UI.Theme.HoverTint;
         grid.AlternatingRowsDefaultCellStyle.SelectionForeColor = UI.Theme.TextPrimary;
+        grid.AlternatingRowsDefaultCellStyle.WrapMode = DataGridViewTriState.False;
     }
 
     /// <summary>
@@ -318,11 +324,11 @@ public class SettingsForm : Form
             AllowUserToDeleteRows = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", Width = 80 });
-        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 160 });
-        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Type", HeaderText = "Type", Width = 80 });
-        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Host", HeaderText = "Host", Width = 110 });
-        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Port", HeaderText = "Port", Width = 60 });
+        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", Width = 80, MinimumWidth = 60 });
+        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 160, MinimumWidth = 100 });
+        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Type", HeaderText = "Type", Width = 80, MinimumWidth = 60 });
+        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Host", HeaderText = "Host", Width = 110, MinimumWidth = 80 });
+        _proxyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Port", HeaderText = "Port", Width = 60, MinimumWidth = 50 });
         ApplyGridTheme(_proxyGrid);
 
         p.Controls.Add(_proxyGrid);
@@ -341,12 +347,12 @@ public class SettingsForm : Form
             AllowUserToDeleteRows = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", Width = 100 });
-        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 140 });
-        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Exe", HeaderText = "Executable Path", Width = 280 });
-        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Mode", HeaderText = "Mode", Width = 100 });
-        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy ID", Width = 80 });
-        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "UserDataDir", HeaderText = "User Data Dir", Width = 200 });
+        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", Width = 90, MinimumWidth = 70 });
+        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", FillWeight = 20, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
+        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Exe", HeaderText = "Executable Path", FillWeight = 40, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 140 });
+        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Mode", HeaderText = "Mode", Width = 100, MinimumWidth = 80 });
+        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy ID", Width = 70, MinimumWidth = 60 });
+        _appGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "UserDataDir", HeaderText = "User Data Dir", FillWeight = 30, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
         ApplyGridTheme(_appGrid);
 
         p.Controls.Add(_appGrid);
@@ -365,12 +371,12 @@ public class SettingsForm : Form
             AllowUserToDeleteRows = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", Width = 140 });
-        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 140 });
-        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy ID", Width = 80 });
-        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "AppPath", HeaderText = "App Path", Width = 200 });
-        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ConfigPath", HeaderText = "Config Path", Width = 200 });
-        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "RuleFormat", HeaderText = "Rule Format", Width = 90 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Id", HeaderText = "ID", FillWeight = 20, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", FillWeight = 18, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy ID", Width = 70, MinimumWidth = 60 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "AppPath", HeaderText = "App Path", FillWeight = 24, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 120 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ConfigPath", HeaderText = "Config Path", FillWeight = 26, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 120 });
+        _backendGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "RuleFormat", HeaderText = "Rule Format", Width = 90, MinimumWidth = 70 });
         ApplyGridTheme(_backendGrid);
 
         p.Controls.Add(_backendGrid);
@@ -389,13 +395,13 @@ public class SettingsForm : Form
             AllowUserToDeleteRows = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", Width = 180 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ExePath", HeaderText = "Executable", Width = 260 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", Width = 120 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy", Width = 70 });
-        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", HeaderText = "Enabled", Width = 60 });
-        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 60, ReadOnly = true });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", Width = 110, ReadOnly = true });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", FillWeight = 22, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 120 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ExePath", HeaderText = "Executable", FillWeight = 36, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 140 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", FillWeight = 16, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 90 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy", Width = 70, MinimumWidth = 60 });
+        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", HeaderText = "Enabled", Width = 60, MinimumWidth = 55 });
+        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 60, MinimumWidth = 55, ReadOnly = true });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", FillWeight = 14, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 90, ReadOnly = true });
         ApplyGridTheme(_routeGrid);
 
         p.Controls.Add(_routeGrid);

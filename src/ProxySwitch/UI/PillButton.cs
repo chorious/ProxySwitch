@@ -37,6 +37,8 @@ public sealed class PillButton : Button
         Font = Theme.BodyFont;
         TextAlign = ContentAlignment.MiddleCenter;
         UseCompatibleTextRendering = false;
+        // Pill min height — keeps dot/text from collapsing when AutoSize underestimates.
+        MinimumSize = new Size(0, 28);
         SetStyle(ControlStyles.OptimizedDoubleBuffer
                | ControlStyles.AllPaintingInWmPaint
                | ControlStyles.UserPaint
@@ -44,6 +46,21 @@ public sealed class PillButton : Button
         // BackColor doesn't matter — the Region clip below removes the corner
         // pixels at the Win32 level so the parent shows through there.
         BackColor = Theme.PanelBg;
+    }
+
+    /// <summary>
+    /// Reserve extra width for the AccentDot + 6px gap drawn in OnPaint.
+    /// Without this, base.GetPreferredSize only accounts for Text+Padding —
+    /// AutoSize returns too-narrow width and the right edge of the label is
+    /// clipped (v0.8.2 patch — Pinned Apps pill truncation).
+    /// </summary>
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        var baseSize = base.GetPreferredSize(proposedSize);
+        if (!AccentDot.HasValue) return baseSize;
+        int dotDiameter = (int)Math.Round(baseSize.Height * 0.40f);
+        int extra = dotDiameter + 6;
+        return new Size(baseSize.Width + extra, baseSize.Height);
     }
 
     protected override void OnResize(EventArgs e)
@@ -113,10 +130,14 @@ public sealed class PillButton : Button
             textX += d + 6;
         }
 
-        // Render label using TextRenderer for ClearType-quality glyphs.
-        var textBounds = new Rectangle(textX, 0, Width - textX - Padding.Right, Height);
+        // Render label using TextRenderer for ClearType-quality glyphs. NoPadding
+        // strips GDI's default ~3px insets so the AccentDot reservation in
+        // GetPreferredSize is enough; Math.Max guards against negative width when
+        // a caller misconfigures Padding (v0.8.2 patch).
+        var textBounds = new Rectangle(textX, 0, Math.Max(0, Width - textX - Padding.Right), Height);
         TextRenderer.DrawText(g, Text, Font, textBounds, fore,
-            TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+            TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter
+            | TextFormatFlags.Left | TextFormatFlags.NoPadding);
     }
 
     private static GraphicsPath RoundedRect(RectangleF r, float radius)

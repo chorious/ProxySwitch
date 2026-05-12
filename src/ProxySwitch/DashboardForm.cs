@@ -373,7 +373,7 @@ public class DashboardForm : Form
             Spring = true,
             TextAlign = ContentAlignment.MiddleCenter
         };
-        _statusVersion = new ToolStripStatusLabel("v0.8.1")
+        _statusVersion = new ToolStripStatusLabel("v0.8.2")
         {
             ForeColor = UI.Theme.TextSecondary,
             Font = UI.Theme.StatusLabel,
