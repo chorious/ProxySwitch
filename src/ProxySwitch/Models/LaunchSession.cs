@@ -32,6 +32,13 @@ public sealed class LaunchSession
     /// </summary>
     public bool IsLauncherHandoffDetected { get; set; }
 
+    /// <summary>
+    /// Whether this launch wrote a persistent (saved) AppRoute. Tmp launches set this
+    /// to false. RouteDetectedChild reads this so a child of a tmp parent inherits
+    /// tmp scope instead of silently being saved to proxyswitch.json.
+    /// </summary>
+    public bool IsPersistentLaunch { get; set; }
+
     public string? LastError { get; set; }
 
     public int? LiveProcessId

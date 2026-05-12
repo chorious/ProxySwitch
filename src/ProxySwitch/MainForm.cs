@@ -30,7 +30,7 @@ public class MainForm : Form
         SetupServices();
         BuildMenu();
         _tray.Visible = true;
-        Logger.Info("ProxySwitch v0.6 started");
+        Logger.Info("ProxySwitch v0.8.1 started");
     }
 
     private void InitializeComponent()
@@ -86,18 +86,22 @@ public class MainForm : Form
         _processMonitor = new ProcessMonitor();
         _backend = new ProxiFyreBackend(_config, _events);
         _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend);
+        _sessionManager.RouteActivated += OnRouteActivated;
 
-        // If we have persistent routes from a previous session, refresh ProxiFyre's
-        // app-config.json with just those (drops any leftover tmp routes from last run).
-        // We do NOT restart the service here — no UAC popup on startup.
+        // Refresh ProxiFyre's app-config.json on every startup whenever the backend is
+        // enabled — drops leftover tmp routes from last run, and (critically) writes an
+        // empty rules block when the user has deleted all AppRoutes since last launch.
+        // Without this, app-config.json would still hold the previously-deleted routes,
+        // and the service would keep matching them after its next restart. We do NOT
+        // restart the service here — no UAC popup on startup.
         if (_config.TransparentBackend.Enabled
-            && _config.TransparentBackend.Type == "proxifyre"
-            && _config.AppRoutes.Any(r => r.IsPersistent))
+            && _config.TransparentBackend.Type == "proxifyre")
         {
             try
             {
                 _backend.WriteConfig();
-                _events.Add("StartupConfigRefresh", $"wrote {_config.AppRoutes.Count(r => r.IsPersistent)} persistent route(s) into ProxiFyre config");
+                var persistent = _config.AppRoutes.Count(r => r.IsPersistent);
+                _events.Add("StartupConfigRefresh", $"wrote {persistent} persistent route(s) into ProxiFyre config");
             }
             catch (Exception ex)
             {
@@ -128,6 +132,10 @@ public class MainForm : Form
         try { _monitor?.StopPolling(); } catch { }
         try { _monitor?.Dispose(); } catch { }
         try { _processMonitor?.Dispose(); } catch { }
+        if (_sessionManager != null)
+        {
+            try { _sessionManager.RouteActivated -= OnRouteActivated; } catch { }
+        }
         try { _sessionManager?.Dispose(); } catch { }
         try { _externalWatcher?.Dispose(); } catch { }
         _monitor = null!;
@@ -139,22 +147,23 @@ public class MainForm : Form
     }
 
     /// <summary>
-    /// Hot reload runtime state after Settings save. Closes Dashboard (it captures
-    /// the old service references), tears down monitors/launcher/backend/session
-    /// manager, rebuilds them against the freshly-loaded _config, then rebuilds tray.
+    /// Hot reload runtime state after Settings save. Tears down old monitors /
+    /// launcher / backend / session manager, rebuilds them against the freshly-
+    /// loaded _config, then rebuilds the tray menu. If Dashboard is open, it
+    /// gets rebound in-place (no close + reopen — #6 in opus_review_v0.7.1).
     /// EventStore survives so the user keeps their event history.
     /// </summary>
     private void ReloadRuntimeServices()
     {
-        if (_dashboard != null && !_dashboard.IsDisposed)
-        {
-            try { _dashboard.Close(); } catch { }
-            _dashboard = null;
-        }
         TearDownServices();
         LoadConfig();
         SetupServices();
         BuildMenu();
+        if (_dashboard != null && !_dashboard.IsDisposed)
+        {
+            try { _dashboard.Rebind(_config, _monitor, _sessionManager, _events, _launcher, _backend); }
+            catch (Exception ex) { Logger.Error($"Dashboard.Rebind failed: {ex.Message}"); }
+        }
         _events?.Add("RuntimeReloaded", "services rebuilt after settings change");
     }
 
@@ -166,6 +175,33 @@ public class MainForm : Form
             return;
         }
         UpdateTrayIcon();
+    }
+
+    /// <summary>
+    /// Tray balloon when a drop-zone-launched session reaches active state. Fired
+    /// from SessionManager.ApplyRoutingInBackgroundAsync on the background thread —
+    /// marshal back via Invoke. Not fired for external attach or browser sessions.
+    /// (plan_opus_v0.7)
+    /// </summary>
+    private void OnRouteActivated(Models.LaunchSession session)
+    {
+        if (InvokeRequired)
+        {
+            Invoke(() => OnRouteActivated(session));
+            return;
+        }
+        try
+        {
+            var proxy = _config.Proxies.FirstOrDefault(p => p.Id == session.ProxyId);
+            var portLabel = proxy != null ? $"Port {proxy.Port}" : "ProxiFyre";
+            var backendLabel = proxy?.Name ?? "ProxiFyre";
+            _tray.ShowBalloonTip(
+                5000,
+                $"{portLabel} hijack active",
+                $"{session.Name} is now routed via {backendLabel}",
+                ToolTipIcon.Info);
+        }
+        catch (Exception ex) { Logger.Error($"OnRouteActivated balloon failed: {ex.Message}"); }
     }
 
     private void BuildMenu()
@@ -241,14 +277,7 @@ public class MainForm : Form
             _menu.Items.Add(new ToolStripSeparator());
         }
 
-        _menu.Items.Add("Settings...", null, (_, _) =>
-        {
-            using var form = new SettingsForm();
-            form.ShowDialog();
-            // Settings rewrote proxyswitch.json (possibly). Hot-reload all services
-            // and the tray so they use the new config object — see #1 in GPT review v0.6.3.
-            ReloadRuntimeServices();
-        });
+        _menu.Items.Add("Settings...", null, (_, _) => OpenSettings());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Quit", null, (_, _) => Application.Exit());
 
@@ -256,11 +285,32 @@ public class MainForm : Form
         UpdateTrayIcon();
     }
 
+    /// <summary>
+    /// Open the Settings dialog and trigger ReloadRuntimeServices on OK. Shared
+    /// by the tray-menu Settings item and Dashboard's Settings tab (PR3b). Only
+    /// DialogResult.OK reloads — Cancel / X-close stays a no-op
+    /// (#7 in GPT review v0.7).
+    ///
+    /// Owner is optional: tray menu has no meaningful owner (MainForm is a 1×1
+    /// hidden window), but Dashboard passes itself so the dialog stays Z-ordered
+    /// above the Dashboard and inherits taskbar/Alt-Tab behavior
+    /// (v0.8.1 opus review #3).
+    /// </summary>
+    private void OpenSettings(IWin32Window? owner = null)
+    {
+        using var form = new SettingsForm();
+        if (form.ShowDialog(owner) == DialogResult.OK)
+            ReloadRuntimeServices();
+    }
+
     private void ShowDashboard()
     {
         if (_dashboard == null || _dashboard.IsDisposed)
         {
             _dashboard = new DashboardForm(_config, _monitor, _sessionManager, _events, _launcher, _backend);
+            // Pass the Dashboard as owner so Settings opens above it (taskbar /
+            // Alt-Tab / center-on-parent behave correctly — opus review #3).
+            _dashboard.SettingsRequested += () => OpenSettings(_dashboard);
             _dashboard.FormClosed += (_, _) => _dashboard = null;
             _dashboard.Show();
         }
@@ -323,7 +373,21 @@ public class MainForm : Form
                 if (removed > 0)
                 {
                     _events?.Add("TmpRoutesPurged", $"removed {removed} session-only route(s) on exit");
-                    try { _backend.WriteConfig(); } catch (Exception ex) { Logger.Error($"Exit WriteConfig: {ex.Message}"); }
+                    // Off-UI-thread + 2s timeout so a slow disk (AV scan, SMB, sleeping
+                    // disk) can't block app shutdown. Loss is acceptable — next startup
+                    // re-derives app-config.json from persistent routes anyway.
+                    // (#7 in opus_review_v0.7.1)
+                    var t = Task.Run(() =>
+                    {
+                        try
+                        {
+                            _backend.WriteConfig();
+                            _backend.MarkStaleLiveRoutes("ProxySwitch closed with active tmp routes");
+                        }
+                        catch (Exception ex) { Logger.Error($"Exit WriteConfig: {ex.Message}"); }
+                    });
+                    if (!t.Wait(TimeSpan.FromSeconds(2)))
+                        Logger.Error("Exit WriteConfig timed out (2s) — leaving for next startup to clean up");
                 }
             }
         }

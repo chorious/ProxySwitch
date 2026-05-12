@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ProxySwitch - System Tray Menu</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "secondary": "#006e2f",
+                        "inverse-on-surface": "#eff0fa",
+                        "surface-variant": "#e1e2ec",
+                        "error": "#ba1a1a",
+                        "status-active-green": "#166534",
+                        "status-failed-red": "#B91C1C",
+                        "primary": "#0058be",
+                        "bg-via-child": "#FEF9C3",
+                        "on-surface": "#191b23",
+                        "text-secondary": "#6B7280",
+                        "tertiary-fixed-dim": "#ffb786",
+                        "primary-container": "#2170e4",
+                        "text-primary": "#111827",
+                        "on-primary-fixed": "#001a42",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#fffbff",
+                        "surface-container-high": "#e6e7f2",
+                        "on-primary-fixed-variant": "#004395",
+                        "status-pending-amber": "#B45309",
+                        "outline": "#727785",
+                        "on-tertiary-fixed-variant": "#723600",
+                        "on-primary": "#ffffff",
+                        "tertiary-container": "#b75b00",
+                        "on-background": "#191b23",
+                        "accent-clash": "#22C55E",
+                        "on-tertiary": "#ffffff",
+                        "primary-fixed-dim": "#adc6ff",
+                        "on-tertiary-fixed": "#311400",
+                        "on-secondary-fixed-variant": "#005321",
+                        "panel-bg": "#FFFFFF",
+                        "surface": "#f9f9ff",
+                        "border-subtle": "#D1D5DB",
+                        "on-primary-container": "#fefcff",
+                        "secondary-fixed-dim": "#4ae176",
+                        "on-error-container": "#93000a",
+                        "on-secondary": "#ffffff",
+                        "bg-via-correlated": "#FED7AA",
+                        "surface-container-highest": "#e1e2ec",
+                        "surface-container-low": "#f2f3fd",
+                        "on-error": "#ffffff",
+                        "on-secondary-fixed": "#002109",
+                        "bg-checking": "#DBEAFE",
+                        "on-surface-variant": "#424754",
+                        "bg-failed": "#FEE2E2",
+                        "background": "#f9f9ff",
+                        "inverse-primary": "#adc6ff",
+                        "bg-exited": "#F3F4F6",
+                        "primary-fixed": "#d8e2ff",
+                        "secondary-fixed": "#6bff8f",
+                        "bg-running": "#DCFCE7",
+                        "surface-tint": "#005ac2",
+                        "accent-direct": "#6B7280",
+                        "surface-bright": "#f9f9ff",
+                        "secondary-container": "#6bff8f",
+                        "tertiary-fixed": "#ffdcc6",
+                        "tertiary": "#924700",
+                        "error-container": "#ffdad6",
+                        "window-bg": "#F8FAFC",
+                        "surface-dim": "#d8d9e3",
+                        "outline-variant": "#c2c6d6",
+                        "accent-v2ray": "#3B82F6",
+                        "on-secondary-container": "#007432",
+                        "inverse-surface": "#2e3038",
+                        "surface-container": "#ecedf7"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "container-padding": "16px",
+                        "section-gap": "20px",
+                        "gutter": "12px",
+                        "row-height-dense": "32px",
+                        "unit": "4px",
+                        "row-height-standard": "44px"
+                    },
+                    "fontFamily": {
+                        "dropzone-title": ["Inter"],
+                        "body-compact": ["Inter"],
+                        "status-label": ["Inter"],
+                        "app-name": ["Inter"],
+                        "nav-tab": ["Inter"],
+                        "section-header": ["Inter"],
+                        "console-log": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "dropzone-title": ["16px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "body-compact": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "status-label": ["11px", { "lineHeight": "14px", "fontWeight": "700" }],
+                        "app-name": ["13px", { "lineHeight": "18px", "fontWeight": "600" }],
+                        "nav-tab": ["14px", { "lineHeight": "20px", "fontWeight": "500" }],
+                        "section-header": ["13px", { "lineHeight": "18px", "letterSpacing": "0.02em", "fontWeight": "600" }],
+                        "console-log": ["11px", { "lineHeight": "16px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body class="bg-surface w-screen h-screen flex items-center justify-center font-body-compact text-body-compact">
+<!-- System Tray Menu Container -->
+<div class="w-[240px] bg-panel-bg rounded-xl border border-border-subtle shadow-lg overflow-hidden py-1">
+<!-- Top Section -->
+<div class="px-1 py-0.5">
+<button class="w-full flex items-center px-2 py-1.5 hover:bg-surface-container rounded-DEFAULT text-text-primary text-left group">
+<span class="material-symbols-outlined text-text-secondary mr-2 group-hover:text-primary">monitor</span>
+<span class="font-bold flex-1">Open Dashboard</span>
+</button>
+<button class="w-full flex items-center justify-between px-2 py-1.5 hover:bg-surface-container rounded-DEFAULT text-text-primary text-left group">
+<div class="flex items-center">
+<span class="material-symbols-outlined text-text-secondary mr-2 group-hover:text-primary">rocket_launch</span>
+<span>Quick Launch</span>
+</div>
+<span class="material-symbols-outlined text-text-secondary text-[14px]">chevron_right</span>
+</button>
+</div>
+<!-- Divider -->
+<div class="h-px bg-border-subtle my-1 mx-3"></div>
+<!-- Status Section -->
+<div class="px-3 py-1.5 flex items-center justify-between">
+<span class="text-text-secondary">Proxy Status</span>
+<div class="flex items-center space-x-1.5">
+<span class="w-2 h-2 rounded-full bg-accent-clash"></span>
+<span class="text-status-active-green font-status-label text-status-label">Clash Verge</span>
+</div>
+</div>
+<!-- Divider -->
+<div class="h-px bg-border-subtle my-1 mx-3"></div>
+<!-- Routing Submenus -->
+<div class="px-1 py-0.5 space-y-0.5">
+<button class="w-full flex items-center justify-between px-2 py-1.5 hover:bg-surface-container rounded-DEFAULT text-text-primary text-left group relative">
+<div class="flex items-center">
+<span class="material-symbols-outlined text-accent-clash mr-2">token</span>
+<span>Clash Verge</span>
+</div>
+<span class="material-symbols-outlined text-text-secondary text-[14px]">chevron_right</span>
+</button>
+<button class="w-full flex items-center justify-between px-2 py-1.5 hover:bg-surface-container rounded-DEFAULT text-text-primary text-left group">
+<div class="flex items-center">
+<span class="material-symbols-outlined text-accent-v2ray mr-2">cloud_queue</span>
+<span>v2ray</span>
+</div>
+<span class="material-symbols-outlined text-text-secondary text-[14px]">chevron_right</span>
+</button>
+</div>
+<!-- Divider -->
+<div class="h-px bg-border-subtle my-1 mx-3"></div>
+<!-- Backend Submenu -->
+<div class="px-1 py-0.5">
+<button class="w-full flex items-center justify-between px-2 py-1.5 hover:bg-surface-container rounded-DEFAULT text-text-primary text-left group">
+<div class="flex items-center">
+<span class="material-symbols-outlined text-text-secondary mr-2">shield</span>
+<span>ProxiFyre</span>
+</div>
+<span class="material-symbols-outlined text-text-secondary text-[14px]">chevron_right</span>
+</button>
+</div>
+<!-- Divider -->
+<div class="h-px bg-border-subtle my-1 mx-3"></div>
+<!-- Bottom Section -->
+<div class="px-1 py-0.5">
+<button class="w-full flex items-center px-2 py-1.5 hover:bg-surface-container rounded-DEFAULT text-text-primary text-left group">
+<span class="material-symbols-outlined text-text-secondary mr-2 group-hover:text-primary">settings</span>
+<span>Settings</span>
+</button>
+<button class="w-full flex items-center px-2 py-1.5 hover:bg-surface-container rounded-DEFAULT text-text-primary text-left group">
+<span class="material-symbols-outlined text-text-secondary mr-2 group-hover:text-status-failed-red">close</span>
+<span>Quit</span>
+</button>
+</div>
+</div>
+</body></html>

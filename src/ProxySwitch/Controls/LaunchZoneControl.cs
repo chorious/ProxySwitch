@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ProxySwitch.UI;
 
 namespace ProxySwitch.Controls;
 
@@ -7,6 +8,7 @@ public sealed class LaunchZoneControl : Panel
     public string Title { get; set; } = "";
     public string Subtitle { get; set; } = "Drop app here";
     public string Mode { get; set; } = "direct";
+    public IconRenderer.IconKind IconKind { get; set; } = IconRenderer.IconKind.Direct;
 
     private Color _accentColor = Color.Gray;
     public Color AccentColor
@@ -15,41 +17,74 @@ public sealed class LaunchZoneControl : Panel
         set
         {
             _accentColor = value;
-            _normalFill = Color.FromArgb(40, value);
-            _hoverFill = Color.FromArgb(90, value);
+            _normalFill = Color.FromArgb(28, value);   // ~11% tint
+            _hoverFill = Color.FromArgb(72, value);    // ~28% tint while dragging
             Invalidate();
         }
     }
 
-    private Color _normalFill = Color.FromArgb(40, Color.Gray);
-    private Color _hoverFill = Color.FromArgb(90, Color.Gray);
+    private Color _normalFill = Color.FromArgb(28, Color.Gray);
+    private Color _hoverFill = Color.FromArgb(72, Color.Gray);
     private bool _isHover;
-    private readonly Font _titleFont;
 
     public event Action<string>? FileDropped;
 
     public LaunchZoneControl()
     {
         AllowDrop = true;
-        BorderStyle = BorderStyle.FixedSingle;
+        BorderStyle = BorderStyle.None;   // we paint our own border
         SetStyle(ControlStyles.OptimizedDoubleBuffer
                | ControlStyles.AllPaintingInWmPaint
                | ControlStyles.UserPaint
                | ControlStyles.ResizeRedraw, true);
-        _titleFont = new Font(Font.FontFamily, 11f, FontStyle.Bold);
+        BackColor = Theme.PanelBg;
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        var fillColor = _isHover ? _hoverFill : _normalFill;
-        using (var brush = new SolidBrush(fillColor))
-            e.Graphics.FillRectangle(brush, ClientRectangle);
+        var g = e.Graphics;
+        var r = ClientRectangle;
+        if (r.Width <= 0 || r.Height <= 0) return;
 
-        TextRenderer.DrawText(
-            e.Graphics, $"{Title}\n{Subtitle}", _titleFont, ClientRectangle,
-            AccentColor,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        // Background fill — solid PanelBg, then a subtle accent tint laid on top.
+        using (var bg = new SolidBrush(Theme.PanelBg))
+            g.FillRectangle(bg, r);
+        using (var tint = new SolidBrush(_isHover ? _hoverFill : _normalFill))
+            g.FillRectangle(tint, r);
+
+        // Border (thicker on hover so the active drop target is obvious).
+        var borderWidth = _isHover ? 3f : 1f;
+        var borderColor = _isHover ? AccentColor : Theme.BorderSubtle;
+        var borderRect = new RectangleF(r.X + borderWidth / 2, r.Y + borderWidth / 2,
+                                         r.Width - borderWidth, r.Height - borderWidth);
+        using (var pen = new Pen(borderColor, borderWidth))
+            g.DrawRectangle(pen, borderRect.X, borderRect.Y, borderRect.Width, borderRect.Height);
+
+        // Icon — sized relative to zone, centered horizontally near the top.
+        int iconSize = Math.Min(32, Math.Max(20, r.Height / 4));
+        var iconRect = new RectangleF(
+            (r.Width - iconSize) / 2f,
+            r.Height * 0.18f,
+            iconSize,
+            iconSize);
+        IconRenderer.Draw(g, iconRect, IconKind, AccentColor);
+
+        // Title — centered horizontally, just under the icon.
+        var titleSize = TextRenderer.MeasureText(Title, Theme.DropzoneTitle);
+        var titleX = (r.Width - titleSize.Width) / 2;
+        var titleY = (int)(iconRect.Bottom + 8);
+        TextRenderer.DrawText(g, Title, Theme.DropzoneTitle,
+            new Point(titleX, titleY), Theme.TextPrimary,
+            TextFormatFlags.SingleLine);
+
+        // Subtitle — secondary text under the title.
+        var subSize = TextRenderer.MeasureText(Subtitle, Theme.DropzoneSubtitle);
+        var subX = (r.Width - subSize.Width) / 2;
+        var subY = titleY + titleSize.Height + 2;
+        TextRenderer.DrawText(g, Subtitle, Theme.DropzoneSubtitle,
+            new Point(subX, subY), Theme.TextSecondary,
+            TextFormatFlags.SingleLine);
     }
 
     protected override void OnDragEnter(DragEventArgs e)
@@ -122,14 +157,5 @@ public sealed class LaunchZoneControl : Panel
         {
             return null;
         }
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            _titleFont.Dispose();
-        }
-        base.Dispose(disposing);
     }
 }

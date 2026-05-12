@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ProxySwitch - Confirm Handoff</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-primary": "#ffffff",
+                    "surface-dim": "#d8d9e3",
+                    "inverse-on-surface": "#eff0fa",
+                    "surface-bright": "#f9f9ff",
+                    "accent-direct": "#6B7280",
+                    "on-background": "#191b23",
+                    "bg-via-child": "#FEF9C3",
+                    "surface-container-low": "#f2f3fd",
+                    "on-primary-fixed": "#001a42",
+                    "on-error": "#ffffff",
+                    "status-failed-red": "#B91C1C",
+                    "surface-container-highest": "#e1e2ec",
+                    "secondary-fixed-dim": "#4ae176",
+                    "secondary-fixed": "#6bff8f",
+                    "on-tertiary-fixed": "#311400",
+                    "surface": "#f9f9ff",
+                    "outline": "#727785",
+                    "on-primary-fixed-variant": "#004395",
+                    "bg-checking": "#DBEAFE",
+                    "surface-container": "#ecedf7",
+                    "on-primary-container": "#fefcff",
+                    "panel-bg": "#FFFFFF",
+                    "background": "#f9f9ff",
+                    "status-active-green": "#166534",
+                    "on-secondary-container": "#007432",
+                    "on-secondary-fixed-variant": "#005321",
+                    "accent-v2ray": "#3B82F6",
+                    "tertiary-fixed": "#ffdcc6",
+                    "primary-fixed-dim": "#adc6ff",
+                    "tertiary": "#924700",
+                    "on-tertiary": "#ffffff",
+                    "secondary": "#006e2f",
+                    "accent-clash": "#22C55E",
+                    "bg-failed": "#FEE2E2",
+                    "surface-tint": "#005ac2",
+                    "error-container": "#ffdad6",
+                    "surface-container-high": "#e6e7f2",
+                    "border-subtle": "#D1D5DB",
+                    "surface-container-lowest": "#ffffff",
+                    "on-surface": "#191b23",
+                    "bg-exited": "#F3F4F6",
+                    "surface-variant": "#e1e2ec",
+                    "text-primary": "#111827",
+                    "on-secondary-fixed": "#002109",
+                    "outline-variant": "#c2c6d6",
+                    "error": "#ba1a1a",
+                    "primary-container": "#2170e4",
+                    "status-pending-amber": "#B45309",
+                    "primary": "#0058be",
+                    "inverse-primary": "#adc6ff",
+                    "secondary-container": "#6bff8f",
+                    "on-secondary": "#ffffff",
+                    "bg-running": "#DCFCE7",
+                    "window-bg": "#F8FAFC",
+                    "inverse-surface": "#2e3038",
+                    "on-tertiary-container": "#fffbff",
+                    "on-error-container": "#93000a",
+                    "tertiary-container": "#b75b00",
+                    "text-secondary": "#6B7280",
+                    "primary-fixed": "#d8e2ff",
+                    "bg-via-correlated": "#FED7AA",
+                    "on-tertiary-fixed-variant": "#723600",
+                    "on-surface-variant": "#424754",
+                    "tertiary-fixed-dim": "#ffb786"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "row-height-standard": "44px",
+                    "unit": "4px",
+                    "section-gap": "20px",
+                    "gutter": "12px",
+                    "container-padding": "16px",
+                    "row-height-dense": "32px"
+            },
+            "fontFamily": {
+                    "console-log": [
+                            "JetBrains Mono"
+                    ],
+                    "dropzone-title": [
+                            "Inter"
+                    ],
+                    "app-name": [
+                            "Inter"
+                    ],
+                    "body-compact": [
+                            "Inter"
+                    ],
+                    "nav-tab": [
+                            "Inter"
+                    ],
+                    "section-header": [
+                            "Inter"
+                    ],
+                    "status-label": [
+                            "Inter"
+                    ]
+            },
+            "fontSize": {
+                    "console-log": [
+                            "11px",
+                            {
+                                    "lineHeight": "16px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "dropzone-title": [
+                            "16px",
+                            {
+                                    "lineHeight": "24px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "app-name": [
+                            "13px",
+                            {
+                                    "lineHeight": "18px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "body-compact": [
+                            "12px",
+                            {
+                                    "lineHeight": "16px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "nav-tab": [
+                            "14px",
+                            {
+                                    "lineHeight": "20px",
+                                    "fontWeight": "500"
+                            }
+                    ],
+                    "section-header": [
+                            "13px",
+                            {
+                                    "lineHeight": "18px",
+                                    "letterSpacing": "0.02em",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "status-label": [
+                            "11px",
+                            {
+                                    "lineHeight": "14px",
+                                    "fontWeight": "700"
+                            }
+                    ]
+            }
+        },
+        },
+      }
+    </script>
+<style>
+        body {
+            background-color: #F8FAFC; /* Fallback window-bg */
+        }
+    </style>
+</head>
+<body class="bg-window-bg text-on-surface h-screen w-screen overflow-hidden antialiased flex flex-col items-center justify-center relative">
+<!-- Mock Background App Content for Context -->
+<div class="absolute inset-0 opacity-20 pointer-events-none flex flex-col">
+<!-- Minimal representation of the main UI -->
+<div class="h-row-height-standard border-b border-outline-variant bg-surface w-full"></div>
+<div class="flex flex-1">
+<div class="w-48 border-r border-outline-variant bg-surface-container-lowest h-full"></div>
+<div class="flex-1 p-container-padding grid grid-cols-3 gap-section-gap">
+<div class="bg-panel-bg border border-border-subtle h-48 rounded"></div>
+<div class="bg-panel-bg border border-border-subtle h-48 rounded"></div>
+<div class="bg-panel-bg border border-border-subtle h-48 rounded"></div>
+</div>
+</div>
+</div>
+<!-- Modal Overlay -->
+<div class="fixed inset-0 bg-on-background/40 flex items-center justify-center z-50">
+<!-- Modal Container -->
+<div class="bg-panel-bg w-[720px] max-w-[95vw] rounded border border-border-subtle shadow-[0_4px_24px_rgba(0,0,0,0.15)] flex flex-col">
+<!-- Header -->
+<div class="px-container-padding py-gutter border-b border-outline-variant flex justify-between items-center bg-window-bg rounded-t">
+<div class="flex items-center gap-unit">
+<span class="material-symbols-outlined text-text-secondary text-[18px]">call_split</span>
+<h2 class="font-section-header text-section-header text-on-surface">Confirm Handoff</h2>
+</div>
+<button aria-label="Close" class="text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-[20px]">close</span>
+</button>
+</div>
+<!-- Body Content -->
+<div class="p-container-padding flex flex-col gap-unit">
+<p class="font-body-compact text-body-compact text-on-surface-variant mb-unit">
+                    The routed application has launched child processes. Please confirm which process should receive proxy rules.
+                </p>
+<!-- Data Table (Dense Rhythm) -->
+<div class="border border-outline-variant rounded overflow-hidden">
+<!-- Table Header -->
+<div class="grid grid-cols-[2fr_1fr_1.5fr_2fr] bg-surface-container-low border-b border-outline-variant px-gutter h-row-height-dense items-center">
+<span class="font-status-label text-status-label text-text-secondary uppercase tracking-wider">App Name</span>
+<span class="font-status-label text-status-label text-text-secondary uppercase tracking-wider">PID</span>
+<span class="font-status-label text-status-label text-text-secondary uppercase tracking-wider">Confidence</span>
+<span class="font-status-label text-status-label text-text-secondary uppercase tracking-wider">Reason</span>
+</div>
+<!-- Table Rows -->
+<!-- Selected Row (High Confidence) -->
+<div class="grid grid-cols-[2fr_1fr_1.5fr_2fr] bg-bg-checking border-b border-outline-variant px-gutter h-row-height-standard items-center cursor-pointer transition-colors hover:bg-bg-checking">
+<div class="flex items-center gap-unit">
+<span class="material-symbols-outlined text-[16px] text-primary" style="font-variation-settings: 'FILL' 1;">radio_button_checked</span>
+<span class="font-body-compact text-body-compact text-on-surface font-semibold">GameClient_x64.exe</span>
+</div>
+<span class="font-console-log text-console-log text-on-surface-variant">18492</span>
+<div class="flex items-center gap-unit">
+<div class="h-[6px] w-16 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-status-active-green w-[92%]"></div>
+</div>
+<span class="font-console-log text-console-log text-status-active-green">92%</span>
+</div>
+<span class="font-body-compact text-body-compact text-on-surface-variant truncate" title="High network I/O correlated with parent rules">High network I/O correlated</span>
+</div>
+<!-- Alternate Row (Medium Confidence) -->
+<div class="grid grid-cols-[2fr_1fr_1.5fr_2fr] bg-surface-container-lowest border-b border-outline-variant px-gutter h-row-height-standard items-center cursor-pointer transition-colors hover:bg-surface-container-low">
+<div class="flex items-center gap-unit pl-[20px]">
+<span class="material-symbols-outlined text-[16px] text-outline-variant">radio_button_unchecked</span>
+<span class="font-body-compact text-body-compact text-on-surface">CrashReporter.exe</span>
+</div>
+<span class="font-console-log text-console-log text-on-surface-variant">18504</span>
+<div class="flex items-center gap-unit">
+<div class="h-[6px] w-16 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-status-pending-amber w-[45%]"></div>
+</div>
+<span class="font-console-log text-console-log text-status-pending-amber">45%</span>
+</div>
+<span class="font-body-compact text-body-compact text-on-surface-variant truncate">Launched from same directory</span>
+</div>
+<!-- Alternate Row (Low Confidence) -->
+<div class="grid grid-cols-[2fr_1fr_1.5fr_2fr] bg-surface-container-lowest px-gutter h-row-height-standard items-center cursor-pointer transition-colors hover:bg-surface-container-low">
+<div class="flex items-center gap-unit pl-[20px]">
+<span class="material-symbols-outlined text-[16px] text-outline-variant">radio_button_unchecked</span>
+<span class="font-body-compact text-body-compact text-on-surface">GameOverlayUI.exe</span>
+</div>
+<span class="font-console-log text-console-log text-on-surface-variant">18520</span>
+<div class="flex items-center gap-unit">
+<div class="h-[6px] w-16 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-outline w-[12%]"></div>
+</div>
+<span class="font-console-log text-console-log text-outline">12%</span>
+</div>
+<span class="font-body-compact text-body-compact text-on-surface-variant truncate">Injected hook detected</span>
+</div>
+</div>
+</div>
+<!-- Footer / Actions -->
+<div class="px-container-padding py-gutter border-t border-outline-variant bg-window-bg flex justify-end gap-gutter rounded-b">
+<button class="h-[28px] px-4 border border-border-subtle text-on-surface bg-surface-container-lowest hover:bg-surface-container-low font-body-compact text-body-compact rounded transition-colors duration-150 flex items-center justify-center">
+                    Ignore
+                </button>
+<button class="h-[28px] px-3 border border-border-subtle text-on-surface bg-surface-container-lowest hover:bg-surface-container-low font-body-compact text-body-compact rounded transition-colors duration-150 flex items-center justify-center gap-unit">
+<span class="material-symbols-outlined text-[16px] text-text-secondary">folder_open</span>
+                    Open Location
+                </button>
+<div class="w-px h-auto bg-outline-variant mx-1"></div> <!-- Divider -->
+<button class="h-[28px] px-4 border border-transparent text-on-primary bg-primary hover:bg-primary-container hover:text-on-primary-container font-body-compact text-body-compact font-medium rounded transition-colors duration-150 flex items-center justify-center">
+                    Track Selected
+                </button>
+</div>
+</div>
+</div>
+</body></html>

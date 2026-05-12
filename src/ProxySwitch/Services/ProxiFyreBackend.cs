@@ -18,10 +18,41 @@ public class ProxiFyreBackend
     private readonly ProxyConfig _config;
     private readonly EventStore _events;
 
+    /// <summary>
+    /// True when ProxySwitch has removed routes from app-config.json without
+    /// restarting the ProxiFyre service. The on-disk file is clean, but the
+    /// live WFP/ProxiFyre service may still be matching the old rules until
+    /// it reloads. UI uses this to label the Restart button honestly.
+    /// </summary>
+    public bool HasStaleLiveRoutes { get; private set; }
+
+    /// <summary>Raised when HasStaleLiveRoutes flips, so the Dashboard can re-render.</summary>
+    public event Action? StaleLiveRoutesChanged;
+
     public ProxiFyreBackend(ProxyConfig config, EventStore events)
     {
         _config = config;
         _events = events;
+    }
+
+    /// <summary>
+    /// Mark that the on-disk config and live ProxiFyre state are out of sync
+    /// because routes were removed without a service restart. <paramref name="reason"/>
+    /// is logged for the event feed. Idempotent.
+    /// </summary>
+    public void MarkStaleLiveRoutes(string reason)
+    {
+        if (HasStaleLiveRoutes) return;
+        HasStaleLiveRoutes = true;
+        _events.Add("StaleLiveRoutes", $"live service may still hold removed routes — {reason}");
+        StaleLiveRoutesChanged?.Invoke();
+    }
+
+    private void ClearStaleLiveRoutes()
+    {
+        if (!HasStaleLiveRoutes) return;
+        HasStaleLiveRoutes = false;
+        StaleLiveRoutesChanged?.Invoke();
     }
 
     /// <summary>
@@ -160,12 +191,15 @@ public class ProxiFyreBackend
 
         Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
 
+        // Build the new config once and reuse for both diff and write — used to build
+        // twice (#5 in opus_review_v0.7.1).
+        var newJson = BuildConfigJson();
+
         // Timestamped backup of any existing config (every write, not just first).
         if (File.Exists(path))
         {
             try
             {
-                var newJson = BuildConfigJson();
                 var existing = File.ReadAllText(path);
                 if (existing != newJson)
                 {
@@ -183,7 +217,7 @@ public class ProxiFyreBackend
         }
 
         var tmp = path + ".tmp";
-        File.WriteAllText(tmp, BuildConfigJson());
+        File.WriteAllText(tmp, newJson);
         File.Move(tmp, path, overwrite: true);
         _events.Add("ProxiFyreConfigWritten", $"{Path.GetFileName(path)} updated");
         Logger.Info($"ProxiFyre config written: {path}");
@@ -477,8 +511,9 @@ public class ProxiFyreBackend
                 sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(10));
             }
             sc.Start();
-            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
+            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
             Logger.Info($"Service {be.ServiceName} restarted via ServiceController");
+            ClearStaleLiveRoutes();
             return true;
         }
         catch (Exception ex)
@@ -536,14 +571,17 @@ public class ProxiFyreBackend
             try
             {
                 using var sc = new ServiceController(name);
-                sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
+                // ProxiFyre (NDISAPI driver re-binding) takes 5-15s cold-start in practice;
+                // 10s was hitting false-positive failures (plan_opus_v0.7). 30s gives margin.
+                sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
                 Logger.Info($"Service {name} restarted via UAC-elevated helper");
                 _events.Add("ServiceRestarted", $"{name}: restarted (elevated)");
+                ClearStaleLiveRoutes();
                 return true;
             }
             catch (System.ServiceProcess.TimeoutException)
             {
-                _events.Add("ServiceRestartFailed", $"{name}: did not reach Running within 10s");
+                _events.Add("ServiceRestartFailed", $"{name}: did not reach Running within 30s");
                 return false;
             }
             catch (InvalidOperationException ex)

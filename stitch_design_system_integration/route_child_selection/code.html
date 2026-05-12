@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Route Child Modal</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary": "#ffffff",
+                        "surface-dim": "#d8d9e3",
+                        "inverse-on-surface": "#eff0fa",
+                        "surface-bright": "#f9f9ff",
+                        "accent-direct": "#6B7280",
+                        "on-background": "#191b23",
+                        "bg-via-child": "#FEF9C3",
+                        "surface-container-low": "#f2f3fd",
+                        "on-primary-fixed": "#001a42",
+                        "on-error": "#ffffff",
+                        "status-failed-red": "#B91C1C",
+                        "surface-container-highest": "#e1e2ec",
+                        "secondary-fixed-dim": "#4ae176",
+                        "secondary-fixed": "#6bff8f",
+                        "on-tertiary-fixed": "#311400",
+                        "surface": "#f9f9ff",
+                        "outline": "#727785",
+                        "on-primary-fixed-variant": "#004395",
+                        "bg-checking": "#DBEAFE",
+                        "surface-container": "#ecedf7",
+                        "on-primary-container": "#fefcff",
+                        "panel-bg": "#FFFFFF",
+                        "background": "#f9f9ff",
+                        "status-active-green": "#166534",
+                        "on-secondary-container": "#007432",
+                        "on-secondary-fixed-variant": "#005321",
+                        "accent-v2ray": "#3B82F6",
+                        "tertiary-fixed": "#ffdcc6",
+                        "primary-fixed-dim": "#adc6ff",
+                        "tertiary": "#924700",
+                        "on-tertiary": "#ffffff",
+                        "secondary": "#006e2f",
+                        "accent-clash": "#22C55E",
+                        "bg-failed": "#FEE2E2",
+                        "surface-tint": "#005ac2",
+                        "error-container": "#ffdad6",
+                        "surface-container-high": "#e6e7f2",
+                        "border-subtle": "#D1D5DB",
+                        "surface-container-lowest": "#ffffff",
+                        "on-surface": "#191b23",
+                        "bg-exited": "#F3F4F6",
+                        "surface-variant": "#e1e2ec",
+                        "text-primary": "#111827",
+                        "on-secondary-fixed": "#002109",
+                        "outline-variant": "#c2c6d6",
+                        "error": "#ba1a1a",
+                        "primary-container": "#2170e4",
+                        "status-pending-amber": "#B45309",
+                        "primary": "#0058be",
+                        "inverse-primary": "#adc6ff",
+                        "secondary-container": "#6bff8f",
+                        "on-secondary": "#ffffff",
+                        "bg-running": "#DCFCE7",
+                        "window-bg": "#F8FAFC",
+                        "inverse-surface": "#2e3038",
+                        "on-tertiary-container": "#fffbff",
+                        "on-error-container": "#93000a",
+                        "tertiary-container": "#b75b00",
+                        "text-secondary": "#6B7280",
+                        "primary-fixed": "#d8e2ff",
+                        "bg-via-correlated": "#FED7AA",
+                        "on-tertiary-fixed-variant": "#723600",
+                        "on-surface-variant": "#424754",
+                        "tertiary-fixed-dim": "#ffb786"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "row-height-standard": "44px",
+                        "unit": "4px",
+                        "section-gap": "20px",
+                        "gutter": "12px",
+                        "container-padding": "16px",
+                        "row-height-dense": "32px"
+                    },
+                    "fontFamily": {
+                        "console-log": ["JetBrains Mono"],
+                        "dropzone-title": ["Inter"],
+                        "app-name": ["Inter"],
+                        "body-compact": ["Inter"],
+                        "nav-tab": ["Inter"],
+                        "section-header": ["Inter"],
+                        "status-label": ["Inter"]
+                    },
+                    "fontSize": {
+                        "console-log": ["11px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "dropzone-title": ["16px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "app-name": ["13px", { "lineHeight": "18px", "fontWeight": "600" }],
+                        "body-compact": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+                        "nav-tab": ["14px", { "lineHeight": "20px", "fontWeight": "500" }],
+                        "section-header": ["13px", { "lineHeight": "18px", "letterSpacing": "0.02em", "fontWeight": "600" }],
+                        "status-label": ["11px", { "lineHeight": "14px", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom scrollbar for the table area to maintain instrument panel feel */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f9f9ff; /* surface */
+            border-left: 1px solid #D1D5DB; /* border-subtle */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #c2c6d6; /* outline-variant */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #727785; /* outline */
+        }
+    </style>
+</head>
+<body class="bg-window-bg text-on-surface h-screen w-full antialiased flex items-center justify-center overflow-hidden">
+<!-- Backdrop Dimmer (Level 0 to Level 1 Transition) -->
+<div class="fixed inset-0 bg-on-background/40 flex items-center justify-center p-container-padding z-50">
+<!-- Modal Container (Level 1 Panel) -->
+<div class="w-full max-w-3xl bg-panel-bg rounded-xl border border-border-subtle shadow-xl flex flex-col max-h-[921px]">
+<!-- Header -->
+<div class="px-section-gap py-gutter border-b border-border-subtle flex justify-between items-center bg-surface-container-lowest rounded-t-xl">
+<h2 class="font-section-header text-section-header text-text-primary">Route Children: Steam</h2>
+<button aria-label="Close" class="text-text-secondary hover:text-text-primary transition-colors flex items-center justify-center rounded hover:bg-surface-container p-1">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+<!-- Body -->
+<div class="p-section-gap flex flex-col gap-gutter overflow-hidden flex-1">
+<!-- Explanation -->
+<div class="flex items-start gap-unit bg-surface-container-low p-gutter rounded border border-border-subtle">
+<span class="material-symbols-outlined text-text-secondary text-[16px] mt-[1px]">info</span>
+<p class="font-body-compact text-body-compact text-text-secondary">
+                        ProxiFyre matches by executable path. Select the child processes below to include them in the routing rules.
+                    </p>
+</div>
+<!-- Data Table (Dense Grid, Zebra Striping, Vertical Dividers) -->
+<div class="border border-border-subtle rounded flex flex-col flex-1 min-h-[200px] overflow-hidden">
+<!-- Table Header -->
+<div class="flex h-row-height-dense bg-surface-container border-b border-border-subtle font-section-header text-section-header text-text-primary">
+<div class="w-12 flex items-center justify-center border-r border-border-subtle">
+<input class="rounded border-border-subtle text-primary focus:ring-primary focus:ring-offset-0 bg-panel-bg cursor-pointer w-4 h-4" type="checkbox"/>
+</div>
+<div class="flex-1 px-gutter flex items-center border-r border-border-subtle truncate">
+                            Process Name
+                        </div>
+<div class="w-24 px-gutter flex items-center border-r border-border-subtle">
+                            PID
+                        </div>
+<div class="flex-[2] px-gutter flex items-center truncate">
+                            Executable Path
+                        </div>
+</div>
+<!-- Table Body (Scrollable) -->
+<div class="flex-1 overflow-y-auto bg-panel-bg font-body-compact text-body-compact">
+<!-- Row 1 (Selected/Zebra Alt) -->
+<div class="flex h-row-height-dense border-b border-border-subtle last:border-b-0 bg-primary-fixed hover:bg-primary-fixed-dim transition-colors cursor-pointer group">
+<div class="w-12 flex items-center justify-center border-r border-border-subtle group-hover:border-transparent transition-colors">
+<input checked="" class="rounded border-border-subtle text-primary focus:ring-primary focus:ring-offset-0 bg-panel-bg cursor-pointer w-4 h-4" type="checkbox"/>
+</div>
+<div class="flex-1 px-gutter flex items-center border-r border-border-subtle text-text-primary font-medium truncate group-hover:border-transparent transition-colors">
+                                steamwebhelper.exe
+                            </div>
+<div class="w-24 px-gutter flex items-center border-r border-border-subtle font-console-log text-console-log text-text-secondary group-hover:border-transparent transition-colors">
+                                10244
+                            </div>
+<div class="flex-[2] px-gutter flex items-center truncate text-text-secondary">
+                                C:\Program Files (x86)\Steam\bin\cef\cef.win7x64\steamwebhelper.exe
+                            </div>
+</div>
+<!-- Row 2 (Zebra) -->
+<div class="flex h-row-height-dense border-b border-border-subtle last:border-b-0 bg-surface hover:bg-surface-container-low transition-colors cursor-pointer group">
+<div class="w-12 flex items-center justify-center border-r border-border-subtle group-hover:border-transparent transition-colors">
+<input class="rounded border-border-subtle text-primary focus:ring-primary focus:ring-offset-0 bg-panel-bg cursor-pointer w-4 h-4" type="checkbox"/>
+</div>
+<div class="flex-1 px-gutter flex items-center border-r border-border-subtle text-text-primary truncate group-hover:border-transparent transition-colors">
+                                steamwebhelper.exe
+                            </div>
+<div class="w-24 px-gutter flex items-center border-r border-border-subtle font-console-log text-console-log text-text-secondary group-hover:border-transparent transition-colors">
+                                11020
+                            </div>
+<div class="flex-[2] px-gutter flex items-center truncate text-text-secondary">
+                                C:\Program Files (x86)\Steam\bin\cef\cef.win7x64\steamwebhelper.exe
+                            </div>
+</div>
+<!-- Row 3 (Zebra Alt) -->
+<div class="flex h-row-height-dense border-b border-border-subtle last:border-b-0 bg-panel-bg hover:bg-surface-container-low transition-colors cursor-pointer group">
+<div class="w-12 flex items-center justify-center border-r border-border-subtle group-hover:border-transparent transition-colors">
+<input class="rounded border-border-subtle text-primary focus:ring-primary focus:ring-offset-0 bg-panel-bg cursor-pointer w-4 h-4" type="checkbox"/>
+</div>
+<div class="flex-1 px-gutter flex items-center border-r border-border-subtle text-text-primary truncate group-hover:border-transparent transition-colors">
+                                steamerrorreporter.exe
+                            </div>
+<div class="w-24 px-gutter flex items-center border-r border-border-subtle font-console-log text-console-log text-text-secondary group-hover:border-transparent transition-colors">
+                                8932
+                            </div>
+<div class="flex-[2] px-gutter flex items-center truncate text-text-secondary">
+                                C:\Program Files (x86)\Steam\steamerrorreporter.exe
+                            </div>
+</div>
+<!-- Row 4 (Zebra) -->
+<div class="flex h-row-height-dense border-b border-border-subtle last:border-b-0 bg-surface hover:bg-surface-container-low transition-colors cursor-pointer group">
+<div class="w-12 flex items-center justify-center border-r border-border-subtle group-hover:border-transparent transition-colors">
+<input class="rounded border-border-subtle text-primary focus:ring-primary focus:ring-offset-0 bg-panel-bg cursor-pointer w-4 h-4" type="checkbox"/>
+</div>
+<div class="flex-1 px-gutter flex items-center border-r border-border-subtle text-text-primary truncate group-hover:border-transparent transition-colors">
+                                GameOverlayUI.exe
+                            </div>
+<div class="w-24 px-gutter flex items-center border-r border-border-subtle font-console-log text-console-log text-text-secondary group-hover:border-transparent transition-colors">
+                                14508
+                            </div>
+<div class="flex-[2] px-gutter flex items-center truncate text-text-secondary">
+                                C:\Program Files (x86)\Steam\GameOverlayUI.exe
+                            </div>
+</div>
+<!-- Row 5 (Zebra Alt) -->
+<div class="flex h-row-height-dense border-b border-border-subtle last:border-b-0 bg-panel-bg hover:bg-surface-container-low transition-colors cursor-pointer group">
+<div class="w-12 flex items-center justify-center border-r border-border-subtle group-hover:border-transparent transition-colors">
+<input class="rounded border-border-subtle text-primary focus:ring-primary focus:ring-offset-0 bg-panel-bg cursor-pointer w-4 h-4" type="checkbox"/>
+</div>
+<div class="flex-1 px-gutter flex items-center border-r border-border-subtle text-text-primary truncate group-hover:border-transparent transition-colors">
+                                steam.exe
+                            </div>
+<div class="w-24 px-gutter flex items-center border-r border-border-subtle font-console-log text-console-log text-text-secondary group-hover:border-transparent transition-colors">
+                                7740
+                            </div>
+<div class="flex-[2] px-gutter flex items-center truncate text-text-secondary">
+                                C:\Program Files (x86)\Steam\steam.exe
+                            </div>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer (Right-aligned actions) -->
+<div class="px-section-gap py-gutter border-t border-border-subtle flex justify-end gap-gutter bg-surface-container-low rounded-b-xl">
+<button class="h-[28px] px-container-padding border border-border-subtle bg-panel-bg rounded text-text-primary font-body-compact text-body-compact hover:bg-surface-container transition-colors focus:outline-none focus:ring-2 focus:ring-outline-variant focus:ring-offset-1 focus:ring-offset-surface-container-low shadow-sm">
+                    Cancel
+                </button>
+<button class="h-[28px] px-container-padding border border-transparent bg-primary text-on-primary rounded font-body-compact text-body-compact hover:bg-primary-container hover:text-on-primary-container transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-surface-container-low shadow-sm font-medium">
+                    Route Selected
+                </button>
+</div>
+</div>
+</div>
+</body></html>

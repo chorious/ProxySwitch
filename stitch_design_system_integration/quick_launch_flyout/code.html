@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ProxySwitch - Quick Launch</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings:
+            'FILL' 0,
+            'wght' 400,
+            'GRAD' 0,
+            'opsz' 24;
+        }
+        .fill-icon {
+             font-variation-settings: 'FILL' 1;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "bg-via-child": "#FEF9C3",
+                      "tertiary-fixed-dim": "#ffb786",
+                      "on-secondary-container": "#007432",
+                      "accent-direct": "#6B7280",
+                      "on-background": "#191b23",
+                      "on-error-container": "#93000a",
+                      "secondary-fixed": "#6bff8f",
+                      "secondary-container": "#6bff8f",
+                      "inverse-primary": "#adc6ff",
+                      "on-tertiary": "#ffffff",
+                      "on-secondary": "#ffffff",
+                      "bg-checking": "#DBEAFE",
+                      "background": "#f9f9ff",
+                      "panel-bg": "#FFFFFF",
+                      "inverse-on-surface": "#eff0fa",
+                      "status-failed-red": "#B91C1C",
+                      "outline-variant": "#c2c6d6",
+                      "on-primary": "#ffffff",
+                      "bg-via-correlated": "#FED7AA",
+                      "status-active-green": "#166534",
+                      "window-bg": "#F8FAFC",
+                      "secondary-fixed-dim": "#4ae176",
+                      "on-secondary-fixed": "#002109",
+                      "surface-container-high": "#e6e7f2",
+                      "accent-v2ray": "#3B82F6",
+                      "surface-variant": "#e1e2ec",
+                      "on-error": "#ffffff",
+                      "error": "#ba1a1a",
+                      "primary-fixed-dim": "#adc6ff",
+                      "surface": "#f9f9ff",
+                      "on-secondary-fixed-variant": "#005321",
+                      "status-pending-amber": "#B45309",
+                      "text-secondary": "#6B7280",
+                      "primary-container": "#2170e4",
+                      "surface-container-lowest": "#ffffff",
+                      "border-subtle": "#D1D5DB",
+                      "outline": "#727785",
+                      "text-primary": "#111827",
+                      "surface-container-low": "#f2f3fd",
+                      "on-tertiary-fixed": "#311400",
+                      "on-tertiary-container": "#fffbff",
+                      "on-primary-fixed-variant": "#004395",
+                      "on-surface-variant": "#424754",
+                      "primary": "#0058be",
+                      "error-container": "#ffdad6",
+                      "bg-running": "#DCFCE7",
+                      "surface-container-highest": "#e1e2ec",
+                      "on-tertiary-fixed-variant": "#723600",
+                      "tertiary-fixed": "#ffdcc6",
+                      "surface-dim": "#d8d9e3",
+                      "surface-container": "#ecedf7",
+                      "tertiary-container": "#b75b00",
+                      "accent-clash": "#22C55E",
+                      "bg-exited": "#F3F4F6",
+                      "on-primary-container": "#fefcff",
+                      "surface-tint": "#005ac2",
+                      "tertiary": "#924700",
+                      "on-surface": "#191b23",
+                      "primary-fixed": "#d8e2ff",
+                      "bg-failed": "#FEE2E2",
+                      "secondary": "#006e2f",
+                      "inverse-surface": "#2e3038",
+                      "surface-bright": "#f9f9ff",
+                      "on-primary-fixed": "#001a42"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "spacing": {
+                      "row-height-standard": "44px",
+                      "unit": "4px",
+                      "gutter": "12px",
+                      "section-gap": "20px",
+                      "container-padding": "16px",
+                      "row-height-dense": "32px"
+              },
+              "fontFamily": {
+                      "status-label": [
+                              "Inter"
+                      ],
+                      "section-header": [
+                              "Inter"
+                      ],
+                      "dropzone-title": [
+                              "Inter"
+                      ],
+                      "console-log": [
+                              "JetBrains Mono"
+                      ],
+                      "app-name": [
+                              "Inter"
+                      ],
+                      "body-compact": [
+                              "Inter"
+                      ],
+                      "nav-tab": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "status-label": [
+                              "11px",
+                              {
+                                      "lineHeight": "14px",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "section-header": [
+                              "13px",
+                              {
+                                      "lineHeight": "18px",
+                                      "letterSpacing": "0.02em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "dropzone-title": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "console-log": [
+                              "11px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "app-name": [
+                              "13px",
+                              {
+                                      "lineHeight": "18px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-compact": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "nav-tab": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "500"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+</head>
+<body class="bg-surface-container-highest min-h-screen flex items-center justify-center p-8">
+<!-- Quick Launch Flyout Container -->
+<div class="w-[280px] bg-panel-bg border border-border-subtle rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden flex flex-col font-body-compact text-body-compact">
+<!-- Header area -->
+<div class="px-container-padding py-3 border-b border-surface-variant flex items-center justify-between">
+<span class="font-app-name text-app-name text-on-surface">ProxySwitch</span>
+<span class="material-symbols-outlined text-outline text-[18px] cursor-pointer hover:text-on-surface">settings</span>
+</div>
+<div class="flex-1 overflow-y-auto p-2">
+<!-- Pinned Section -->
+<div class="mb-4">
+<div class="px-2 py-1 mb-1">
+<span class="font-section-header text-section-header text-text-secondary uppercase tracking-wider text-[10px]">Pinned</span>
+</div>
+<div class="flex flex-col gap-unit">
+<!-- Item: Chrome Direct -->
+<button class="flex items-center w-full px-2 py-2 rounded-lg hover:bg-surface-container-low transition-colors group text-left">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center mr-3 text-text-secondary group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[18px]">public</span>
+</div>
+<div class="flex-1">
+<div class="text-on-surface font-medium leading-tight">Chrome</div>
+<div class="text-text-secondary text-[10px] leading-tight mt-0.5">Direct Route</div>
+</div>
+<span class="material-symbols-outlined text-outline opacity-0 group-hover:opacity-100 transition-opacity text-[16px]">more_vert</span>
+</button>
+<!-- Item: Chrome 10708 -->
+<button class="flex items-center w-full px-2 py-2 rounded-lg hover:bg-surface-container-low transition-colors group text-left">
+<div class="w-8 h-8 rounded bg-bg-running flex items-center justify-center mr-3 text-status-active-green">
+<span class="material-symbols-outlined text-[18px] fill-icon">shield</span>
+</div>
+<div class="flex-1">
+<div class="text-on-surface font-medium leading-tight">Chrome</div>
+<div class="text-text-secondary text-[10px] leading-tight mt-0.5">Port 10708 (v2ray)</div>
+</div>
+<span class="material-symbols-outlined text-outline opacity-0 group-hover:opacity-100 transition-opacity text-[16px]">more_vert</span>
+</button>
+<!-- Item: Obsidian -->
+<button class="flex items-center w-full px-2 py-2 rounded-lg hover:bg-surface-container-low transition-colors group text-left">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center mr-3 text-text-secondary group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[18px]">edit_document</span>
+</div>
+<div class="flex-1">
+<div class="text-on-surface font-medium leading-tight">Obsidian</div>
+<div class="text-text-secondary text-[10px] leading-tight mt-0.5">Clash Proxy</div>
+</div>
+<span class="material-symbols-outlined text-outline opacity-0 group-hover:opacity-100 transition-opacity text-[16px]">more_vert</span>
+</button>
+</div>
+</div>
+<!-- Recent Section -->
+<div>
+<div class="px-2 py-1 mb-1">
+<span class="font-section-header text-section-header text-text-secondary uppercase tracking-wider text-[10px]">Recent</span>
+</div>
+<div class="flex flex-col gap-unit">
+<!-- Item: Steam -->
+<button class="flex items-center w-full px-2 py-2 rounded-lg hover:bg-surface-container-low transition-colors group text-left">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center mr-3 text-text-secondary group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[18px]">sports_esports</span>
+</div>
+<div class="flex-1">
+<div class="text-on-surface font-medium leading-tight">Steam</div>
+<div class="text-text-secondary text-[10px] leading-tight mt-0.5">System Default</div>
+</div>
+</button>
+<!-- Item: Edge -->
+<button class="flex items-center w-full px-2 py-2 rounded-lg hover:bg-surface-container-low transition-colors group text-left">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center mr-3 text-text-secondary group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[18px]">explore</span>
+</div>
+<div class="flex-1">
+<div class="text-on-surface font-medium leading-tight">Edge</div>
+<div class="text-text-secondary text-[10px] leading-tight mt-0.5">Direct Route</div>
+</div>
+</button>
+</div>
+</div>
+</div>
+<!-- Footer Action -->
+<div class="p-2 border-t border-surface-variant bg-surface-bright">
+<button class="w-full flex items-center justify-center gap-2 py-1.5 px-3 rounded text-on-surface hover:bg-surface-container transition-colors border border-transparent hover:border-border-subtle">
+<span class="material-symbols-outlined text-[16px]">folder_open</span>
+<span>Browse for .exe...</span>
+</button>
+</div>
+</div>
+</body></html>

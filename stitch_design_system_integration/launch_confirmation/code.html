@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Launch Confirmation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-primary": "#ffffff",
+                    "surface-dim": "#d8d9e3",
+                    "inverse-on-surface": "#eff0fa",
+                    "surface-bright": "#f9f9ff",
+                    "accent-direct": "#6B7280",
+                    "on-background": "#191b23",
+                    "bg-via-child": "#FEF9C3",
+                    "surface-container-low": "#f2f3fd",
+                    "on-primary-fixed": "#001a42",
+                    "on-error": "#ffffff",
+                    "status-failed-red": "#B91C1C",
+                    "surface-container-highest": "#e1e2ec",
+                    "secondary-fixed-dim": "#4ae176",
+                    "secondary-fixed": "#6bff8f",
+                    "on-tertiary-fixed": "#311400",
+                    "surface": "#f9f9ff",
+                    "outline": "#727785",
+                    "on-primary-fixed-variant": "#004395",
+                    "bg-checking": "#DBEAFE",
+                    "surface-container": "#ecedf7",
+                    "on-primary-container": "#fefcff",
+                    "panel-bg": "#FFFFFF",
+                    "background": "#f9f9ff",
+                    "status-active-green": "#166534",
+                    "on-secondary-container": "#007432",
+                    "on-secondary-fixed-variant": "#005321",
+                    "accent-v2ray": "#3B82F6",
+                    "tertiary-fixed": "#ffdcc6",
+                    "primary-fixed-dim": "#adc6ff",
+                    "tertiary": "#924700",
+                    "on-tertiary": "#ffffff",
+                    "secondary": "#006e2f",
+                    "accent-clash": "#22C55E",
+                    "bg-failed": "#FEE2E2",
+                    "surface-tint": "#005ac2",
+                    "error-container": "#ffdad6",
+                    "surface-container-high": "#e6e7f2",
+                    "border-subtle": "#D1D5DB",
+                    "surface-container-lowest": "#ffffff",
+                    "on-surface": "#191b23",
+                    "bg-exited": "#F3F4F6",
+                    "surface-variant": "#e1e2ec",
+                    "text-primary": "#111827",
+                    "on-secondary-fixed": "#002109",
+                    "outline-variant": "#c2c6d6",
+                    "error": "#ba1a1a",
+                    "primary-container": "#2170e4",
+                    "status-pending-amber": "#B45309",
+                    "primary": "#0058be",
+                    "inverse-primary": "#adc6ff",
+                    "secondary-container": "#6bff8f",
+                    "on-secondary": "#ffffff",
+                    "bg-running": "#DCFCE7",
+                    "window-bg": "#F8FAFC",
+                    "inverse-surface": "#2e3038",
+                    "on-tertiary-container": "#fffbff",
+                    "on-error-container": "#93000a",
+                    "tertiary-container": "#b75b00",
+                    "text-secondary": "#6B7280",
+                    "primary-fixed": "#d8e2ff",
+                    "bg-via-correlated": "#FED7AA",
+                    "on-tertiary-fixed-variant": "#723600",
+                    "on-surface-variant": "#424754",
+                    "tertiary-fixed-dim": "#ffb786"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "row-height-standard": "44px",
+                    "unit": "4px",
+                    "section-gap": "20px",
+                    "gutter": "12px",
+                    "container-padding": "16px",
+                    "row-height-dense": "32px"
+            },
+            "fontFamily": {
+                    "console-log": [
+                            "JetBrains Mono"
+                    ],
+                    "dropzone-title": [
+                            "Inter"
+                    ],
+                    "app-name": [
+                            "Inter"
+                    ],
+                    "body-compact": [
+                            "Inter"
+                    ],
+                    "nav-tab": [
+                            "Inter"
+                    ],
+                    "section-header": [
+                            "Inter"
+                    ],
+                    "status-label": [
+                            "Inter"
+                    ]
+            },
+            "fontSize": {
+                    "console-log": [
+                            "11px",
+                            {
+                                    "lineHeight": "16px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "dropzone-title": [
+                            "16px",
+                            {
+                                    "lineHeight": "24px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "app-name": [
+                            "13px",
+                            {
+                                    "lineHeight": "18px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "body-compact": [
+                            "12px",
+                            {
+                                    "lineHeight": "16px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "nav-tab": [
+                            "14px",
+                            {
+                                    "lineHeight": "20px",
+                                    "fontWeight": "500"
+                            }
+                    ],
+                    "section-header": [
+                            "13px",
+                            {
+                                    "lineHeight": "18px",
+                                    "letterSpacing": "0.02em",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "status-label": [
+                            "11px",
+                            {
+                                    "lineHeight": "14px",
+                                    "fontWeight": "700"
+                            }
+                    ]
+            }
+    },
+        },
+      }
+    </script>
+</head>
+<body class="bg-window-bg text-on-surface min-h-screen flex items-center justify-center font-body-compact text-body-compact antialiased">
+<div class="fixed inset-0 bg-on-background/40 z-40 transition-opacity backdrop-blur-sm"></div>
+<div class="relative z-50 w-full max-w-[420px] bg-panel-bg rounded-lg border border-border-subtle shadow-xl flex flex-col mx-4">
+<div class="px-container-padding py-gutter border-b border-border-subtle/50 flex justify-between items-center bg-surface-container-lowest rounded-t-lg">
+<div class="flex items-center gap-unit">
+<span class="material-symbols-outlined text-accent-direct text-[18px]">rocket_launch</span>
+<h2 class="font-section-header text-section-header text-on-surface">Launch via Clash Verge 10708?</h2>
+</div>
+<button class="text-text-secondary hover:text-on-surface transition-colors flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+<div class="p-container-padding flex flex-col gap-section-gap">
+<p class="text-text-secondary leading-relaxed">
+                You are about to route a new application through the specific proxy node configured in Clash Verge.
+            </p>
+<div class="flex flex-col gap-gutter bg-surface-container-low p-gutter rounded border border-border-subtle/40">
+<div class="flex gap-gutter items-start">
+<div class="mt-0.5 bg-surface-container-highest rounded p-1 shadow-sm border border-border-subtle/50">
+<span class="material-symbols-outlined text-text-secondary text-[16px] block">save</span>
+</div>
+<div>
+<strong class="text-on-surface font-medium block mb-0.5">Save route permanently</strong>
+<span class="text-text-secondary block">Applies to all future sessions. Requires UAC elevation for ProxiFyre to modify system-level routing tables.</span>
+</div>
+</div>
+<div class="h-px bg-border-subtle/40 w-full ml-10"></div>
+<div class="flex gap-gutter items-start">
+<div class="mt-0.5 bg-surface-container-highest rounded p-1 shadow-sm border border-border-subtle/50">
+<span class="material-symbols-outlined text-text-secondary text-[16px] block">schedule</span>
+</div>
+<div>
+<strong class="text-on-surface font-medium block mb-0.5">Just this session</strong>
+<span class="text-text-secondary block">Applies temporarily until the launched application process completely exits.</span>
+</div>
+</div>
+</div>
+</div>
+<div class="px-container-padding py-gutter border-t border-border-subtle/50 bg-surface-container-lowest flex justify-end items-center gap-gutter rounded-b-lg">
+<button class="h-7 px-3 rounded text-text-secondary hover:bg-surface-container transition-colors focus:outline-none focus:ring-2 focus:ring-outline-variant">
+                Cancel
+            </button>
+<button class="h-7 px-3 rounded border border-border-subtle text-on-surface bg-panel-bg hover:bg-surface-container transition-colors focus:outline-none focus:ring-2 focus:ring-outline-variant shadow-sm">
+                Just This Session
+            </button>
+<button class="h-7 px-4 rounded bg-primary text-on-primary hover:bg-on-primary-fixed-variant transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-container flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">shield</span>
+                Save Route
+            </button>
+</div>
+</div>
+</body></html>

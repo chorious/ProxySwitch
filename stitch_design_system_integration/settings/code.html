@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ProxySwitch - Settings</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-primary": "#ffffff",
+                      "surface-dim": "#d8d9e3",
+                      "inverse-on-surface": "#eff0fa",
+                      "surface-bright": "#f9f9ff",
+                      "accent-direct": "#6B7280",
+                      "on-background": "#191b23",
+                      "bg-via-child": "#FEF9C3",
+                      "surface-container-low": "#f2f3fd",
+                      "on-primary-fixed": "#001a42",
+                      "on-error": "#ffffff",
+                      "status-failed-red": "#B91C1C",
+                      "surface-container-highest": "#e1e2ec",
+                      "secondary-fixed-dim": "#4ae176",
+                      "secondary-fixed": "#6bff8f",
+                      "on-tertiary-fixed": "#311400",
+                      "surface": "#f9f9ff",
+                      "outline": "#727785",
+                      "on-primary-fixed-variant": "#004395",
+                      "bg-checking": "#DBEAFE",
+                      "surface-container": "#ecedf7",
+                      "on-primary-container": "#fefcff",
+                      "panel-bg": "#FFFFFF",
+                      "background": "#f9f9ff",
+                      "status-active-green": "#166534",
+                      "on-secondary-container": "#007432",
+                      "on-secondary-fixed-variant": "#005321",
+                      "accent-v2ray": "#3B82F6",
+                      "tertiary-fixed": "#ffdcc6",
+                      "primary-fixed-dim": "#adc6ff",
+                      "tertiary": "#924700",
+                      "on-tertiary": "#ffffff",
+                      "secondary": "#006e2f",
+                      "accent-clash": "#22C55E",
+                      "bg-failed": "#FEE2E2",
+                      "surface-tint": "#005ac2",
+                      "error-container": "#ffdad6",
+                      "surface-container-high": "#e6e7f2",
+                      "border-subtle": "#D1D5DB",
+                      "surface-container-lowest": "#ffffff",
+                      "on-surface": "#191b23",
+                      "bg-exited": "#F3F4F6",
+                      "surface-variant": "#e1e2ec",
+                      "text-primary": "#111827",
+                      "on-secondary-fixed": "#002109",
+                      "outline-variant": "#c2c6d6",
+                      "error": "#ba1a1a",
+                      "primary-container": "#2170e4",
+                      "status-pending-amber": "#B45309",
+                      "primary": "#0058be",
+                      "inverse-primary": "#adc6ff",
+                      "secondary-container": "#6bff8f",
+                      "on-secondary": "#ffffff",
+                      "bg-running": "#DCFCE7",
+                      "window-bg": "#F8FAFC",
+                      "inverse-surface": "#2e3038",
+                      "on-tertiary-container": "#fffbff",
+                      "on-error-container": "#93000a",
+                      "tertiary-container": "#b75b00",
+                      "text-secondary": "#6B7280",
+                      "primary-fixed": "#d8e2ff",
+                      "bg-via-correlated": "#FED7AA",
+                      "on-tertiary-fixed-variant": "#723600",
+                      "on-surface-variant": "#424754",
+                      "tertiary-fixed-dim": "#ffb786"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "spacing": {
+                      "row-height-standard": "44px",
+                      "unit": "4px",
+                      "section-gap": "20px",
+                      "gutter": "12px",
+                      "container-padding": "16px",
+                      "row-height-dense": "32px"
+              },
+              "fontFamily": {
+                      "console-log": [
+                              "JetBrains Mono"
+                      ],
+                      "dropzone-title": [
+                              "Inter"
+                      ],
+                      "app-name": [
+                              "Inter"
+                      ],
+                      "body-compact": [
+                              "Inter"
+                      ],
+                      "nav-tab": [
+                              "Inter"
+                      ],
+                      "section-header": [
+                              "Inter"
+                      ],
+                      "status-label": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "console-log": [
+                              "11px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "dropzone-title": [
+                              "16px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "app-name": [
+                              "13px",
+                              {
+                                      "lineHeight": "18px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-compact": [
+                              "12px",
+                              {
+                                      "lineHeight": "16px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "nav-tab": [
+                              "14px",
+                              {
+                                      "lineHeight": "20px",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "section-header": [
+                              "13px",
+                              {
+                                      "lineHeight": "18px",
+                                      "letterSpacing": "0.02em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "status-label": [
+                              "11px",
+                              {
+                                      "lineHeight": "14px",
+                                      "fontWeight": "700"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+</head>
+<body class="bg-window-bg text-text-primary min-h-screen flex items-center justify-center p-4">
+<!-- Modal Container -->
+<div class="w-[820px] h-[560px] bg-panel-bg border border-border-subtle rounded-lg shadow-sm flex flex-col overflow-hidden relative">
+<!-- TopAppBar (Suppressed navigation, acting as window header for modal) -->
+<div class="flex justify-between items-center px-container-padding h-row-height-standard w-full bg-surface border-b border-outline-variant cursor-default select-none top-0">
+<div class="font-app-name text-app-name text-on-surface">ProxySwitch Settings</div>
+<div class="flex items-center gap-1 text-on-surface-variant">
+<button class="w-8 h-8 flex items-center justify-center hover:bg-surface-container rounded-sm transition-colors">
+<span class="material-symbols-outlined text-[18px]">remove</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center hover:bg-surface-container rounded-sm transition-colors">
+<span class="material-symbols-outlined text-[18px]">check_box_outline_blank</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center hover:bg-error-container hover:text-on-error-container rounded-sm transition-colors">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+</div>
+<div class="flex flex-1 overflow-hidden">
+<!-- SideNavBar -->
+<nav class="docked h-full left-0 border-r border-outline-variant flat no shadows flex flex-col w-48 p-gutter gap-unit bg-surface-container-lowest">
+<div class="mb-4 mt-2 px-2">
+<h2 class="font-section-header text-section-header text-on-surface">Configuration</h2>
+<p class="font-body-compact text-body-compact text-text-secondary">Network Rules</p>
+</div>
+<div class="flex flex-col gap-1">
+<button class="flex items-center gap-3 px-3 py-2 text-left font-nav-tab text-nav-tab bg-primary-container text-on-primary-container rounded-lg transition-colors duration-150">
+<span class="material-symbols-outlined text-[20px]">route</span>
+                        App Routes
+                    </button>
+<button class="flex items-center gap-3 px-3 py-2 text-left font-nav-tab text-nav-tab text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors duration-150">
+<span class="material-symbols-outlined text-[20px]">router</span>
+                        Proxies
+                    </button>
+<button class="flex items-center gap-3 px-3 py-2 text-left font-nav-tab text-nav-tab text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors duration-150">
+<span class="material-symbols-outlined text-[20px]">dns</span>
+                        DNS Settings
+                    </button>
+<button class="flex items-center gap-3 px-3 py-2 text-left font-nav-tab text-nav-tab text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors duration-150">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+                        General
+                    </button>
+<button class="flex items-center gap-3 px-3 py-2 text-left font-nav-tab text-nav-tab text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors duration-150 mt-auto">
+<span class="material-symbols-outlined text-[20px]">tune</span>
+                        Transparent Backend
+                    </button>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col bg-surface-lowest overflow-hidden">
+<!-- Content Header -->
+<div class="px-container-padding py-4 border-b border-border-subtle bg-surface-bright flex justify-between items-center shrink-0">
+<div>
+<h1 class="font-dropzone-title text-dropzone-title text-text-primary">App Routes</h1>
+<p class="font-body-compact text-body-compact text-text-secondary mt-1">Configure routing rules for specific executables.</p>
+</div>
+<button class="h-[28px] px-3 bg-primary text-on-primary font-body-compact text-body-compact rounded-DEFAULT hover:bg-surface-tint transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px]">add</span>
+                        Add Rule
+                    </button>
+</div>
+<!-- Editable Grid Container -->
+<div class="flex-1 overflow-auto bg-panel-bg p-container-padding">
+<div class="border border-border-subtle rounded-DEFAULT overflow-hidden">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-low border-b border-border-subtle font-section-header text-section-header text-on-surface h-[32px]">
+<th class="px-3 py-1 font-medium border-r border-border-subtle w-8 text-center"><input class="rounded-sm border-outline-variant text-primary focus:ring-primary h-3 w-3" type="checkbox"/></th>
+<th class="px-3 py-1 font-medium border-r border-border-subtle">Name</th>
+<th class="px-3 py-1 font-medium border-r border-border-subtle">Executable</th>
+<th class="px-3 py-1 font-medium border-r border-border-subtle w-24">Process</th>
+<th class="px-3 py-1 font-medium border-r border-border-subtle w-32">Proxy</th>
+<th class="px-3 py-1 font-medium border-r border-border-subtle w-20 text-center">Enabled</th>
+<th class="px-3 py-1 font-medium border-r border-border-subtle w-20 text-center">Saved</th>
+<th class="px-3 py-1 font-medium w-16 text-center">Action</th>
+</tr>
+</thead>
+<tbody class="font-body-compact text-body-compact text-text-primary">
+<!-- Row 1 -->
+<tr class="border-b border-border-subtle h-[32px] hover:bg-surface-container-lowest transition-colors bg-panel-bg">
+<td class="px-3 py-1 border-r border-border-subtle text-center"><input class="rounded-sm border-outline-variant text-primary focus:ring-primary h-3 w-3" type="checkbox"/></td>
+<td class="px-3 py-1 border-r border-border-subtle">
+<input class="w-full bg-transparent border-none p-0 focus:ring-0 text-body-compact h-full" type="text" value="Development Browser"/>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle font-console-log text-console-log">chrome.exe</td>
+<td class="px-3 py-1 border-r border-border-subtle text-status-active-green font-medium">Running (2)</td>
+<td class="px-3 py-1 border-r border-border-subtle">
+<select class="w-full bg-transparent border-none p-0 focus:ring-0 text-body-compact h-full">
+<option>DIRECT</option>
+<option selected="">PROXY_US</option>
+<option>PROXY_EU</option>
+</select>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle text-center">
+<span class="material-symbols-outlined text-[16px] text-primary">check_circle</span>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle text-center">
+<span class="material-symbols-outlined text-[16px] text-text-secondary">save</span>
+</td>
+<td class="px-3 py-1 text-center">
+<button class="text-text-secondary hover:text-error transition-colors"><span class="material-symbols-outlined text-[16px]">delete</span></button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="border-b border-border-subtle h-[32px] hover:bg-surface-container-lowest transition-colors bg-surface-bright">
+<td class="px-3 py-1 border-r border-border-subtle text-center"><input class="rounded-sm border-outline-variant text-primary focus:ring-primary h-3 w-3" type="checkbox"/></td>
+<td class="px-3 py-1 border-r border-border-subtle">
+<input class="w-full bg-transparent border-none p-0 focus:ring-0 text-body-compact h-full" type="text" value="Git Client"/>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle font-console-log text-console-log">git.exe</td>
+<td class="px-3 py-1 border-r border-border-subtle text-text-secondary">Stopped</td>
+<td class="px-3 py-1 border-r border-border-subtle">
+<select class="w-full bg-transparent border-none p-0 focus:ring-0 text-body-compact h-full">
+<option selected="">DIRECT</option>
+<option>PROXY_US</option>
+<option>PROXY_EU</option>
+</select>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle text-center">
+<span class="material-symbols-outlined text-[16px] text-primary">check_circle</span>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle text-center">
+<span class="material-symbols-outlined text-[16px] text-text-secondary">save</span>
+</td>
+<td class="px-3 py-1 text-center">
+<button class="text-text-secondary hover:text-error transition-colors"><span class="material-symbols-outlined text-[16px]">delete</span></button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="border-b border-border-subtle h-[32px] hover:bg-surface-container-lowest transition-colors bg-panel-bg">
+<td class="px-3 py-1 border-r border-border-subtle text-center"><input class="rounded-sm border-outline-variant text-primary focus:ring-primary h-3 w-3" type="checkbox"/></td>
+<td class="px-3 py-1 border-r border-border-subtle">
+<input class="w-full bg-transparent border-none p-0 focus:ring-0 text-body-compact h-full" type="text" value="Steam Updater"/>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle font-console-log text-console-log">steam.exe</td>
+<td class="px-3 py-1 border-r border-border-subtle text-text-secondary">Stopped</td>
+<td class="px-3 py-1 border-r border-border-subtle">
+<select class="w-full bg-transparent border-none p-0 focus:ring-0 text-body-compact h-full">
+<option>DIRECT</option>
+<option>PROXY_US</option>
+<option selected="">Block</option>
+</select>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle text-center">
+<span class="material-symbols-outlined text-[16px] text-outline">radio_button_unchecked</span>
+</td>
+<td class="px-3 py-1 border-r border-border-subtle text-center">
+<span class="material-symbols-outlined text-[16px] text-text-secondary">save</span>
+</td>
+<td class="px-3 py-1 text-center">
+<button class="text-text-secondary hover:text-error transition-colors"><span class="material-symbols-outlined text-[16px]">delete</span></button>
+</td>
+</tr>
+<!-- Empty Rows to fill space -->
+<tr class="border-b border-border-subtle h-[32px] bg-surface-bright"><td colspan="8"></td></tr>
+<tr class="border-b border-border-subtle h-[32px] bg-panel-bg"><td colspan="8"></td></tr>
+<tr class="border-b border-border-subtle h-[32px] bg-surface-bright"><td colspan="8"></td></tr>
+<tr class="h-[32px] bg-panel-bg"><td colspan="8"></td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</main>
+</div>
+<!-- Action Footer -->
+<div class="px-container-padding py-3 border-t border-border-subtle bg-surface flex justify-end gap-2 shrink-0">
+<button class="h-[28px] px-4 bg-surface border border-border-subtle text-text-primary font-body-compact text-body-compact rounded-DEFAULT hover:bg-surface-container transition-colors">
+                Cancel
+            </button>
+<button class="h-[28px] px-4 bg-primary text-on-primary font-body-compact text-body-compact rounded-DEFAULT hover:bg-surface-tint transition-colors">
+                Apply Settings
+            </button>
+</div>
+</div>
+</body></html>

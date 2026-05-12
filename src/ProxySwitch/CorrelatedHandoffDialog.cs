@@ -1,14 +1,24 @@
 using System.Diagnostics;
+using System.Drawing.Drawing2D;
 using ProxySwitch.Models;
+using ProxySwitch.UI;
 
 namespace ProxySwitch;
 
+/// <summary>
+/// Confirm-handoff dialog for the correlated-process detection path. The
+/// detector ranks candidate processes by heuristic score; the user picks one
+/// to track, or Ignore. PR5c: Stitch refresh — Theme tokens for row tints,
+/// rounded score badge, PillButton CTAs. We keep the panel-row layout (not a
+/// DataGridView) because each candidate has a multi-line "Reasons" footnote
+/// that doesn't fit a single-line cell.
+/// </summary>
 public class CorrelatedHandoffDialog : Form
 {
     private readonly List<HandoffCandidate> _candidates;
     private readonly List<RadioButton> _radioButtons = new();
-    private Button _trackBtn = null!;
-    private Button _openBtn = null!;
+    private PillButton _trackBtn = null!;
+    private PillButton _openBtn = null!;
 
     public HandoffCandidate? SelectedCandidate { get; private set; }
     public bool Ignored { get; private set; }
@@ -17,38 +27,35 @@ public class CorrelatedHandoffDialog : Form
     {
         _candidates = candidates;
         Text = $"Confirm Handoff: {session.Name}";
-        Size = new Size(740, 520);
+        Size = new Size(760, 540);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
+        ShowInTaskbar = false;
+        BackColor = Theme.WindowBg;
+        Font = Theme.BodyFont;
+        ForeColor = Theme.TextPrimary;
 
         BuildUI(session);
     }
 
     private void BuildUI(LaunchSession session)
     {
-        // Use a single TableLayoutPanel as the root — avoids the Dock add-order
-        // pitfall where Fill consumes space before Top/Bottom siblings are added.
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3
+            RowCount = 3,
+            BackColor = Theme.WindowBg,
+            Padding = new Padding(16),
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64f));    // top label
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));    // candidate list
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52f));    // button row
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76f));   // info banner
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));   // candidate list
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));   // button row
 
-        var topLbl = new Label
-        {
-            Text = $"{Path.GetFileName(session.ExePath)} exited. ProxySwitch detected the following processes that may be the launched app.\n" +
-                   "Confidence is heuristic — select one only if you recognize it as the right target.",
-            Dock = DockStyle.Fill,
-            Padding = new Padding(12, 12, 12, 4),
-            AutoSize = false
-        };
-        root.Controls.Add(topLbl, 0, 0);
+        root.Controls.Add(BuildInfoBanner(session), 0, 0);
 
         var listPanel = new FlowLayoutPanel
         {
@@ -56,7 +63,8 @@ public class CorrelatedHandoffDialog : Form
             FlowDirection = FlowDirection.TopDown,
             AutoScroll = true,
             WrapContents = false,
-            Padding = new Padding(12, 4, 12, 4)
+            BackColor = Theme.PanelBg,
+            Margin = new Padding(0, 8, 0, 8),
         };
         foreach (var cand in _candidates.Take(5))
             listPanel.Controls.Add(BuildCandidateRow(cand));
@@ -66,13 +74,24 @@ public class CorrelatedHandoffDialog : Form
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(8)
+            BackColor = Theme.WindowBg,
+            Padding = new Padding(0, 8, 0, 0),
         };
-
-        var ignoreBtn = new Button { Text = "Ignore", AutoSize = true };
+        var ignoreBtn = new PillButton
+        {
+            Text = "Ignore",
+            Variant = PillButton.PillVariant.Default,
+            Padding = new Padding(18, 6, 18, 6),
+        };
         ignoreBtn.Click += (_, _) => { Ignored = true; DialogResult = DialogResult.Cancel; Close(); };
 
-        _trackBtn = new Button { Text = "Track Selected", AutoSize = true, Enabled = false };
+        _trackBtn = new PillButton
+        {
+            Text = "Track Selected",
+            Variant = PillButton.PillVariant.Primary,
+            Padding = new Padding(18, 6, 18, 6),
+            Enabled = false,
+        };
         _trackBtn.Click += (_, _) =>
         {
             var selectedIdx = _radioButtons.FindIndex(rb => rb.Checked);
@@ -84,7 +103,13 @@ public class CorrelatedHandoffDialog : Form
             }
         };
 
-        _openBtn = new Button { Text = "Open Location", AutoSize = true, Enabled = false };
+        _openBtn = new PillButton
+        {
+            Text = "Open Location",
+            Variant = PillButton.PillVariant.Default,
+            Padding = new Padding(18, 6, 18, 6),
+            Enabled = false,
+        };
         _openBtn.Click += (_, _) =>
         {
             var selectedIdx = _radioButtons.FindIndex(rb => rb.Checked);
@@ -102,33 +127,73 @@ public class CorrelatedHandoffDialog : Form
             }
         };
 
-        btnPanel.Controls.Add(ignoreBtn);
+        // Stitch order: Ignore / Open Location / Track Selected — flow is RightToLeft
+        // so adding Track Selected first puts it on the right.
         btnPanel.Controls.Add(_trackBtn);
         btnPanel.Controls.Add(_openBtn);
+        btnPanel.Controls.Add(ignoreBtn);
         root.Controls.Add(btnPanel, 0, 2);
 
         Controls.Add(root);
+        AcceptButton = _trackBtn;
+        CancelButton = ignoreBtn;
+    }
+
+    /// <summary>
+    /// Info banner explaining the heuristic. Same shape as RouteChildDialog's
+    /// banner (BgChecking light blue + Info icon).
+    /// </summary>
+    private static Panel BuildInfoBanner(LaunchSession session)
+    {
+        var panel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Theme.BgChecking,
+            Padding = new Padding(12),
+        };
+        var iconBox = new Panel
+        {
+            Size = new Size(24, 24),
+            BackColor = Theme.BgChecking,
+            Location = new Point(12, 12),
+        };
+        iconBox.Paint += (_, e) =>
+            IconRenderer.Draw(e.Graphics, new RectangleF(0, 0, 24, 24), IconRenderer.IconKind.Info, Theme.StatusInfoBlue);
+        panel.Controls.Add(iconBox);
+
+        var text = new Label
+        {
+            Text = $"{Path.GetFileName(session.ExePath)} exited and ProxySwitch detected processes that may be the launched app.\n" +
+                   $"Confidence is heuristic — pick a candidate only if you recognize it as the right target.",
+            Location = new Point(44, 8),
+            Size = new Size(660, 56),
+            ForeColor = Theme.TextPrimary,
+            BackColor = Theme.BgChecking,
+            Font = Theme.BodyFont,
+        };
+        panel.Controls.Add(text);
+        return panel;
     }
 
     private Panel BuildCandidateRow(HandoffCandidate cand)
     {
+        var bg = cand.Confidence == "high" ? Theme.BgRunning : Theme.BgViaChild;
         var row = new Panel
         {
             Width = 680,
             Height = 84,
-            Margin = new Padding(0, 4, 0, 4),
-            BorderStyle = BorderStyle.FixedSingle,
-            BackColor = cand.Confidence == "high"
-                ? Color.FromArgb(220, 252, 231)
-                : Color.FromArgb(254, 249, 195)
+            Margin = new Padding(0, 1, 0, 0),
+            BackColor = bg,
         };
 
         var rb = new RadioButton
         {
             Text = $"{cand.Process.Name}  (PID {cand.Process.ProcessId})",
-            Location = new Point(8, 6),
+            Location = new Point(12, 8),
             AutoSize = true,
-            Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold)
+            Font = Theme.BodySemibold,
+            ForeColor = Theme.TextPrimary,
+            BackColor = bg,
         };
         rb.CheckedChanged += (_, _) =>
         {
@@ -138,38 +203,97 @@ public class CorrelatedHandoffDialog : Form
         _radioButtons.Add(rb);
         row.Controls.Add(rb);
 
-        var scoreLbl = new Label
+        // Score badge — rounded rect painted on a hosting panel.
+        var badge = new ScoreBadge(cand.Score, cand.Confidence)
         {
-            Text = $"Score: {cand.Score}  ({cand.Confidence})",
-            Location = new Point(490, 6),
-            AutoSize = true,
-            ForeColor = cand.Confidence == "high" ? Color.DarkGreen : Color.DarkOrange,
-            Font = new Font(Font.FontFamily, 9f, FontStyle.Bold)
+            Location = new Point(500, 8),
+            Size = new Size(160, 22),
+            BackColor = bg,
         };
-        row.Controls.Add(scoreLbl);
+        row.Controls.Add(badge);
 
         var pathLbl = new Label
         {
             Text = cand.Process.ExecutablePath ?? "(no path)",
-            Location = new Point(28, 30),
-            Width = 640,
+            Location = new Point(32, 30),
+            Width = 620,
             AutoEllipsis = true,
-            ForeColor = Color.DimGray,
-            Font = new Font(Font.FontFamily, 8.5f)
+            ForeColor = Theme.TextSecondary,
+            BackColor = bg,
+            Font = Theme.BodyFont,
         };
         row.Controls.Add(pathLbl);
 
         var reasonsLbl = new Label
         {
             Text = "Reasons: " + string.Join(", ", cand.Reasons),
-            Location = new Point(28, 52),
-            Width = 640,
+            Location = new Point(32, 52),
+            Width = 620,
             Height = 28,
-            ForeColor = Color.DimGray,
-            Font = new Font(Font.FontFamily, 8f)
+            ForeColor = Theme.TextSecondary,
+            BackColor = bg,
+            Font = Theme.BodyFont,
         };
         row.Controls.Add(reasonsLbl);
 
         return row;
+    }
+
+    /// <summary>
+    /// Small rounded-rect badge: filled in the confidence color, white text.
+    /// Stitch's progress-bar style isn't practical in pure WinForms; this is
+    /// the readable substitute.
+    /// </summary>
+    private sealed class ScoreBadge : Control
+    {
+        private readonly int _score;
+        private readonly string _confidence;
+
+        public ScoreBadge(int score, string confidence)
+        {
+            _score = score;
+            _confidence = confidence;
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer
+                   | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
+            ForeColor = Theme.OnPrimary;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            var fill = _confidence == "high"
+                ? Theme.StatusActiveGreen
+                : Theme.StatusPendingAmber;
+
+            // Background must match parent (we cleared it via the parent's bg in
+            // construction); fill our pill area only.
+            using var bgBrush = new SolidBrush(BackColor);
+            g.FillRectangle(bgBrush, ClientRectangle);
+
+            var r = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
+            using var path = RoundedRect(r, Height / 2f - 0.5f);
+            using var fillBrush = new SolidBrush(fill);
+            g.FillPath(fillBrush, path);
+
+            var text = $"Score: {_score} · {_confidence}";
+            TextRenderer.DrawText(g, text, Theme.BodySemibold, ClientRectangle, Theme.OnPrimary,
+                TextFormatFlags.SingleLine | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+
+        private static GraphicsPath RoundedRect(RectangleF r, float radius)
+        {
+            var path = new GraphicsPath();
+            float d = radius * 2;
+            path.StartFigure();
+            path.AddArc(r.Left, r.Top, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
     }
 }
