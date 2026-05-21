@@ -160,31 +160,54 @@ public class ProcessMonitor : IDisposable
     }
 
     /// <summary>
-    /// Walk the parent chain of <paramref name="pid"/> up to <paramref name="maxDepth"/>
-    /// levels using WMI. Returns true if any ancestor PID is in <paramref name="ancestorPids"/>.
+    /// Build a ProcessId → ParentProcessId map from WMI. Caller should cache
+    /// and reuse for multiple ancestry checks within one operation.
     /// </summary>
-    internal static bool IsAncestorOfAny(int pid, HashSet<int> ancestorPids, int maxDepth = 5)
+    internal static Dictionary<int, int?> GetParentMap()
     {
+        var parentMap = new Dictionary<int, int?>();
         try
         {
-            var parentMap = new Dictionary<int, int?>();
             using var searcher = new ManagementObjectSearcher("SELECT ProcessId, ParentProcessId FROM Win32_Process");
             foreach (ManagementObject obj in searcher.Get())
             {
                 parentMap[Convert.ToInt32(obj["ProcessId"])] = obj["ParentProcessId"] != null ? Convert.ToInt32(obj["ParentProcessId"]) : null;
             }
+        }
+        catch { }
+        return parentMap;
+    }
 
-            var visited = new HashSet<int> { pid };
-            int current = pid;
-            int depth = 0;
-            while (parentMap.TryGetValue(current, out var parent) && parent.HasValue && depth < maxDepth)
-            {
-                if (ancestorPids.Contains(parent.Value)) return true;
-                if (!visited.Add(parent.Value)) break; // cycle guard
-                current = parent.Value;
-                depth++;
-            }
-            return false;
+    /// <summary>
+    /// Walk the parent chain of <paramref name="pid"/> up to <paramref name="maxDepth"/>
+    /// using a pre-built parent map. Returns true if any ancestor PID is in
+    /// <paramref name="ancestorPids"/>.
+    /// </summary>
+    internal static bool IsAncestorOfAny(int pid, HashSet<int> ancestorPids, Dictionary<int, int?> parentMap, int maxDepth = 5)
+    {
+        var visited = new HashSet<int> { pid };
+        int current = pid;
+        int depth = 0;
+        while (parentMap.TryGetValue(current, out var parent) && parent.HasValue && depth < maxDepth)
+        {
+            if (ancestorPids.Contains(parent.Value)) return true;
+            if (!visited.Add(parent.Value)) break; // cycle guard
+            current = parent.Value;
+            depth++;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Convenience overload: queries WMI once internally.
+    /// Prefer the map-taking overload when checking multiple candidates.
+    /// </summary>
+    internal static bool IsAncestorOfAny(int pid, HashSet<int> ancestorPids, int maxDepth = 5)
+    {
+        try
+        {
+            var parentMap = GetParentMap();
+            return IsAncestorOfAny(pid, ancestorPids, parentMap, maxDepth);
         }
         catch { return false; }
     }

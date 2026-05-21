@@ -19,6 +19,16 @@ public class AppIdentityResolver
     }
 
     /// <summary>
+    /// Escape a value so it is safe inside a PowerShell single-quoted string.
+    /// In PowerShell, single quotes inside single-quoted strings are escaped by
+    /// doubling them (' → '').
+    /// </summary>
+    private static string EscapePsSingleQuote(string value)
+    {
+        return value.Replace("'", "''");
+    }
+
+    /// <summary>
     /// Resolve an MSIX package to its current InstallLocation, then combine with
     /// the relative exe path. Returns null if the package is not found or the
     /// resolved file does not exist.
@@ -31,7 +41,7 @@ public class AppIdentityResolver
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -Command \"& {{ Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq '{packageFamilyName}' }} | Select-Object -Property InstallLocation | ConvertTo-Json -Compress }}\"",
+                Arguments = $"-NoProfile -Command \"& {{ Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq '{EscapePsSingleQuote(packageFamilyName)}' }} | Select-Object -Property InstallLocation | ConvertTo-Json -Compress }}\"",
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
@@ -94,7 +104,7 @@ public class AppIdentityResolver
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -Command \"& {{ Get-AppxPackage | Where-Object {{ $_.InstallLocation -like '*{packageFolderName}*' }} | Select-Object -Property PackageFamilyName,InstallLocation | ConvertTo-Json -Compress }}\"",
+                Arguments = $"-NoProfile -Command \"& {{ Get-AppxPackage | Where-Object {{ $_.InstallLocation -like '*{EscapePsSingleQuote(packageFolderName)}*' }} | Select-Object -Property PackageFamilyName,InstallLocation | ConvertTo-Json -Compress }}\"",
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
