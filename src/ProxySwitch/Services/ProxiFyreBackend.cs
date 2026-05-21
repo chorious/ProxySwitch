@@ -17,6 +17,7 @@ public class ProxiFyreBackend
 {
     private readonly ProxyConfig _config;
     private readonly EventStore _events;
+    private readonly AppIdentityResolver _resolver;
 
     /// <summary>
     /// True when ProxySwitch has removed routes from app-config.json without
@@ -29,10 +30,11 @@ public class ProxiFyreBackend
     /// <summary>Raised when HasStaleLiveRoutes flips, so the Dashboard can re-render.</summary>
     public event Action? StaleLiveRoutesChanged;
 
-    public ProxiFyreBackend(ProxyConfig config, EventStore events)
+    public ProxiFyreBackend(ProxyConfig config, EventStore events, AppIdentityResolver resolver)
     {
         _config = config;
         _events = events;
+        _resolver = resolver;
     }
 
     /// <summary>
@@ -147,11 +149,9 @@ public class ProxiFyreBackend
             var apps = new List<string>();
             foreach (var route in g)
             {
-                // ExePath preferred (full path match in ProxiFyre); fallback to ProcessName.
-                if (!string.IsNullOrEmpty(route.ExePath))
-                    apps.Add(route.ExePath);
-                else if (!string.IsNullOrEmpty(route.ProcessName))
-                    apps.Add(route.ProcessName);
+                var appName = _resolver.ResolveBackendAppName(route);
+                if (!string.IsNullOrEmpty(appName))
+                    apps.Add(appName);
             }
             apps = apps.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (apps.Count == 0) continue;
@@ -292,8 +292,18 @@ public class ProxiFyreBackend
                 Source = source,
                 SessionId = isPersistent ? null : sessionId
             };
+
+            // Detect WindowsApps / MSIX and attempt to resolve stable package identity
+            if (AppIdentityResolver.TryResolveMsixIdentity(exePath, out var pfn, out var relExe))
+            {
+                route.MatchKind = "msix-package";
+                route.PackageFamilyName = pfn;
+                route.PackageRelativeExePath = relExe;
+                _events.Add("AppRouteMsixDetected", $"{procName} -> msix-package ({pfn})");
+            }
+
             _config.AppRoutes.Add(route);
-            _events.Add("AppRouteAdded", $"{procName} -> {proxyId} ({(isPersistent ? "persistent" : "session-only")}, source: {source})");
+            _events.Add("AppRouteAdded", $"{procName} -> {proxyId} ({(isPersistent ? "persistent" : "session-only")}, source: {source}, matchKind: {route.MatchKind})");
             changed = true;
         }
 

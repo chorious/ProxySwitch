@@ -44,6 +44,9 @@ public class ProxyConfig
     /// </summary>
     [JsonPropertyName("appRoutes")]
     public List<AppRoute> AppRoutes { get; set; } = [];
+
+    [JsonPropertyName("sessionSupervisor")]
+    public SessionSupervisorConfig SessionSupervisor { get; set; } = new();
 }
 
 public class ProxyInfo
@@ -219,4 +222,29 @@ public class AppRoute
     /// </summary>
     [JsonPropertyName("sessionId")]
     public string? SessionId { get; set; }
+
+    /// <summary>path | process-name | msix-package</summary>
+    [JsonPropertyName("matchKind")]
+    public string MatchKind { get; set; } = "path";
+
+    [JsonPropertyName("packageFamilyName")]
+    public string PackageFamilyName { get; set; } = "";
+
+    [JsonPropertyName("packageRelativeExePath")]
+    public string PackageRelativeExePath { get; set; } = "";
+
+    [JsonPropertyName("resolvedExePath")]
+    public string ResolvedExePath { get; set; } = "";
+
+    [JsonPropertyName("resolvedAt")]
+    public DateTime? ResolvedAt { get; set; }
+}
+
+public class SessionSupervisorConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    [JsonPropertyName("restartGraceSeconds")]
+    public int RestartGraceSeconds { get; set; } = 20;
 }

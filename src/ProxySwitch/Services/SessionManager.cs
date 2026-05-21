@@ -13,6 +13,7 @@ public sealed class SessionManager : IDisposable
     private readonly HandoffScorer _scorer;
     private readonly ProxyConfig _config;
     private readonly ProxiFyreBackend? _backend;
+    private readonly AppIdentityResolver _resolver;
 
     public event Action? SessionsChanged;
     public event Action<LaunchSession, List<HandoffCandidate>>? CorrelatedCandidatesFound;
@@ -21,13 +22,14 @@ public sealed class SessionManager : IDisposable
     /// pop a tray balloon. Not raised for external attach or browser sessions.</summary>
     public event Action<LaunchSession>? RouteActivated;
 
-    public SessionManager(AppLauncher launcher, ProcessMonitor monitor, EventStore events, ProxyConfig config, ProxiFyreBackend? backend = null)
+    public SessionManager(AppLauncher launcher, ProcessMonitor monitor, EventStore events, ProxyConfig config, ProxiFyreBackend? backend = null, AppIdentityResolver? resolver = null)
     {
         _launcher = launcher;
         _processMonitor = monitor;
         _events = events;
         _config = config;
         _backend = backend;
+        _resolver = resolver ?? new AppIdentityResolver();
         _scorer = new HandoffScorer();
     }
 
@@ -294,7 +296,7 @@ public sealed class SessionManager : IDisposable
                         catch (Exception ex)
                         {
                             Logger.Error($"TryCorrelatedHandoffAsync for {name} failed: {ex.Message}");
-                            FinalizeAsExited(session, "correlated check failed");
+                            BeginGraceWindowOrFinalize(session, "correlated check failed");
                         }
                     });
                 }
@@ -359,7 +361,7 @@ public sealed class SessionManager : IDisposable
                 _events.Add("ProcessExited", $"{session.Name}: tracked process exited");
                 if (!session.HasLiveProcesses && session.Status is "running-via-child" or "running-via-correlated")
                 {
-                    FinalizeAsExited(session, "all tracked processes exited");
+                    BeginGraceWindowOrFinalize(session, "all tracked processes exited");
                 }
                 else
                 {
@@ -398,7 +400,7 @@ public sealed class SessionManager : IDisposable
 
         if (newProcesses.Count == 0)
         {
-            FinalizeAsExited(session, "no correlated handoff found");
+            BeginGraceWindowOrFinalize(session, "no correlated handoff found");
             return;
         }
 
@@ -433,7 +435,7 @@ public sealed class SessionManager : IDisposable
             return;
         }
 
-        FinalizeAsExited(session, $"only low-confidence candidates ({candidates.Count}), ignored");
+        BeginGraceWindowOrFinalize(session, $"only low-confidence candidates ({candidates.Count}), ignored");
     }
 
     private void FinalizeAsExited(LaunchSession session, string reason)
@@ -443,6 +445,41 @@ public sealed class SessionManager : IDisposable
         _events.Add("SessionExited", $"{session.Name} exited ({reason})");
         CleanupSessionRoutes(session);
         SessionsChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// If sessionSupervisor is enabled, enter the grace-window state instead of
+    /// immediately finalizing. This lets restarted processes reattach within the
+    /// configured window. If disabled, finalizes immediately.
+    /// </summary>
+    private void BeginGraceWindowOrFinalize(LaunchSession session, string reason)
+    {
+        if (!_config.SessionSupervisor.Enabled)
+        {
+            FinalizeAsExited(session, reason);
+            return;
+        }
+
+        session.Status = "waiting-for-restart";
+        _events.Add("SessionWaitingForRestart", $"{session.Name}: waiting for restart ({_config.SessionSupervisor.RestartGraceSeconds}s grace window)");
+        SessionsChanged?.Invoke();
+
+        var graceSeconds = _config.SessionSupervisor.RestartGraceSeconds;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(graceSeconds));
+                if (session.Status == "waiting-for-restart")
+                {
+                    FinalizeAsExited(session, $"grace window expired ({reason})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Grace window task failed: {ex.Message}");
+            }
+        });
     }
 
     /// <summary>
@@ -505,7 +542,7 @@ public sealed class SessionManager : IDisposable
             _events.Add("ProcessExited", $"{session.Name}: correlated process {proc.Name} exited");
             if (!session.HasLiveProcesses)
             {
-                FinalizeAsExited(session, "correlated process exited");
+                BeginGraceWindowOrFinalize(session, "correlated process exited");
             }
             else
             {
@@ -520,6 +557,139 @@ public sealed class SessionManager : IDisposable
     {
         _events.Add("CorrelatedHandoffIgnored", $"{session.Name}: user ignored correlated candidates");
         FinalizeAsExited(session, "user ignored correlated candidates");
+    }
+
+    /// <summary>
+    /// Unified entry point for ALL process-creation events (from ExternalProcessWatcher
+    /// or SessionSupervisor). Prevents races by serializing the decision:
+    /// 1) Skip if ProxySwitch launched it.
+    /// 2) Try merge into an existing active session by stable route key.
+    /// 3) Fall back to external attach (new session for persistent route).
+    /// </summary>
+    public void HandleProcessStarted(ExternalProcessHit hit)
+    {
+        var myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+        if (hit.ParentProcessId == myPid) return;
+
+        if (TryMergeActiveSession(hit)) return;
+        AttachExternalLaunch(hit);
+    }
+
+    /// <summary>
+    /// Try to add a newly-created process to an existing active session.
+    /// Priority: parent chain > route identity > process name > directory match.
+    /// Returns true if merged.
+    /// </summary>
+    private bool TryMergeActiveSession(ExternalProcessHit hit)
+    {
+        lock (_sessions)
+        {
+            foreach (var session in _sessions)
+            {
+                if (session.Status is "exited" or "failed") continue;
+                if (string.IsNullOrEmpty(session.ProxyId)) continue;
+
+                // Check if this PID is already tracked
+                if (session.Processes.Any(p => p.ProcessId == hit.ProcessId)) return true;
+
+                string? role = null;
+
+                // 1) Parent chain match
+                if (hit.ParentProcessId.HasValue && session.Processes.Any(p => p.ProcessId == hit.ParentProcessId.Value && p.ExitedAt == null))
+                {
+                    role = "descendant";
+                }
+
+                // 2) Route identity match (ExePath / ResolvedExePath)
+                if (role == null)
+                {
+                    var route = _config.AppRoutes.FirstOrDefault(r =>
+                        r.ProxyId == session.ProxyId && r.Enabled &&
+                        (!string.IsNullOrEmpty(hit.ExecutablePath) &&
+                         (string.Equals(r.ExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase)
+                          || string.Equals(r.ResolvedExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase))));
+                    if (route != null) role = "descendant";
+                }
+
+                // 3) Process name match
+                if (role == null)
+                {
+                    var route = _config.AppRoutes.FirstOrDefault(r =>
+                        r.ProxyId == session.ProxyId && r.Enabled &&
+                        string.Equals(AppIdentityResolver.NormalizeProcessName(r.ProcessName), hit.Name, StringComparison.OrdinalIgnoreCase));
+                    if (route != null)
+                    {
+                        var sessionRouteKey = GuessSessionRouteKey(session);
+                        var routeKey = _resolver.GetStableRouteKey(route);
+                        if (sessionRouteKey == routeKey) role = "descendant";
+                    }
+                }
+
+                // 4) Same directory heuristic
+                if (role == null && !string.IsNullOrEmpty(hit.ExecutablePath))
+                {
+                    var hitDir = Path.GetDirectoryName(hit.ExecutablePath);
+                    var sessionDir = Path.GetDirectoryName(session.ExePath);
+                    if (!string.IsNullOrEmpty(hitDir) && !string.IsNullOrEmpty(sessionDir)
+                        && string.Equals(hitDir, sessionDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        role = "descendant";
+                    }
+                }
+
+                if (role != null)
+                {
+                    var rootCreatedAt = ProcessMonitor.GetProcessStartTime(hit.ProcessId) ?? DateTime.Now;
+                    var isRestart = session.Status == "waiting-for-restart";
+                    session.Processes.Add(new TrackedProcess
+                    {
+                        ProcessId = hit.ProcessId,
+                        ParentProcessId = hit.ParentProcessId,
+                        Name = hit.Name,
+                        ExecutablePath = hit.ExecutablePath,
+                        Role = isRestart ? "restarted-child" : role,
+                        CreatedAt = rootCreatedAt
+                    });
+
+                    if (isRestart)
+                    {
+                        session.Status = "running";
+                        _events.Add("ProcessReattached", $"{session.Name}: {hit.Name} (PID={hit.ProcessId}) reattached during grace window");
+                    }
+                    else
+                    {
+                        _events.Add("ProcessMerged", $"{session.Name}: {hit.Name} (PID={hit.ProcessId}) merged into existing session ({role})");
+                    }
+                    SessionsChanged?.Invoke();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Guess the stable route key for an existing session by looking at its
+    /// tracked processes and matching against known routes.
+    /// </summary>
+    private string GuessSessionRouteKey(LaunchSession session)
+    {
+        var liveProcess = session.Processes.FirstOrDefault(p => p.ExitedAt == null);
+        var exePath = liveProcess?.ExecutablePath ?? session.ExePath;
+        var name = liveProcess?.Name ?? Path.GetFileName(session.ExePath);
+
+        var route = _config.AppRoutes.FirstOrDefault(r =>
+            r.ProxyId == session.ProxyId && r.Enabled &&
+            (string.Equals(r.ExePath, exePath, StringComparison.OrdinalIgnoreCase)
+             || string.Equals(AppIdentityResolver.NormalizeProcessName(r.ProcessName), name, StringComparison.OrdinalIgnoreCase)));
+
+        if (route != null) return _resolver.GetStableRouteKey(route);
+
+        // Fallback: derive from session itself
+        var identity = string.IsNullOrEmpty(session.ExePath)
+            ? AppIdentityResolver.NormalizeProcessName(Path.GetFileName(session.ExePath))
+            : session.ExePath;
+        return $"path:{session.ProxyId}:{identity}";
     }
 
     /// <summary>
@@ -540,10 +710,12 @@ public sealed class SessionManager : IDisposable
 
         // Find which persistent AppRoute caused the match. We can't trust
         // ExePath alone (rare apps don't expose it via WMI); fall back to Name.
+        // Normalize process names to include .exe so bare names like "Claude"
+        // match WMI events "Claude.exe".
         var route = _config.AppRoutes.FirstOrDefault(r =>
             r.IsPersistent && r.Enabled &&
             ((!string.IsNullOrEmpty(hit.ExecutablePath) && string.Equals(r.ExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase))
-             || (!string.IsNullOrEmpty(hit.Name) && string.Equals(r.ProcessName, hit.Name, StringComparison.OrdinalIgnoreCase))));
+             || (!string.IsNullOrEmpty(hit.Name) && string.Equals(AppIdentityResolver.NormalizeProcessName(r.ProcessName), hit.Name, StringComparison.OrdinalIgnoreCase))));
         if (route == null) return false;
 
         var rootCreatedAt = ProcessMonitor.GetProcessStartTime(hit.ProcessId) ?? DateTime.Now;
@@ -650,7 +822,7 @@ public sealed class SessionManager : IDisposable
             }
             else
             {
-                FinalizeAsExited(session, "external process exited");
+                BeginGraceWindowOrFinalize(session, "external process exited");
             }
         });
 

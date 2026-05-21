@@ -15,7 +15,8 @@ public sealed class LaunchSession
     public DateTime? RootCreatedAt { get; set; }
     public List<TrackedProcess> Processes { get; } = [];
     public string Status { get; set; } = "starting";
-    // starting / running / running-via-child / running-via-correlated / checking-correlated / exited / failed
+    // starting / running / running-via-child / running-via-correlated / checking-correlated /
+    // waiting-for-restart / exited / failed
 
     /// <summary>
     /// Routing semantics under the v0.5 "Routing Decoupled" model:

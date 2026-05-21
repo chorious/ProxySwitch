@@ -52,8 +52,10 @@ public class ExternalProcessWatcher : IDisposable
             foreach (var route in _config.AppRoutes)
             {
                 if (!route.IsPersistent || !route.Enabled) continue;
-                if (!string.IsNullOrEmpty(route.ProcessName)) _watchedNames.Add(route.ProcessName);
+                var normalizedName = AppIdentityResolver.NormalizeProcessName(route.ProcessName);
+                if (!string.IsNullOrEmpty(normalizedName)) _watchedNames.Add(normalizedName);
                 if (!string.IsNullOrEmpty(route.ExePath)) _watchedPaths.Add(route.ExePath);
+                if (!string.IsNullOrEmpty(route.ResolvedExePath)) _watchedPaths.Add(route.ResolvedExePath);
             }
         }
         EnsureWatcher();

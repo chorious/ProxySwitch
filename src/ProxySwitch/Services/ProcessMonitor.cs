@@ -133,7 +133,7 @@ public class ProcessMonitor : IDisposable
         }
     }
 
-    private static bool IsDescendantOf(
+    internal static bool IsDescendantOf(
         int pid, int ancestorPid,
         Dictionary<int, int?> parentMap,
         Dictionary<int, DateTime?> createdAtMap,

@@ -39,6 +39,7 @@ internal static class Theme
     public static readonly Color BgViaChild = Color.FromArgb(254, 249, 195);         // #FEF9C3
     public static readonly Color BgViaCorrelated = Color.FromArgb(254, 215, 170);    // #FED7AA
     public static readonly Color BgChecking = Color.FromArgb(219, 234, 254);         // #DBEAFE
+    public static readonly Color BgWaiting = Color.FromArgb(254, 243, 199);          // #FEF3C7 amber
     public static readonly Color BgExited = Color.FromArgb(243, 244, 246);           // #F3F4F6
     public static readonly Color BgFailed = Color.FromArgb(254, 226, 226);           // #FEE2E2
 
@@ -85,6 +86,7 @@ internal static class Theme
         "running-via-child" => BgViaChild,
         "running-via-correlated" => BgViaCorrelated,
         "checking-correlated" => BgChecking,
+        "waiting-for-restart" => BgWaiting,
         "exited" => BgExited,
         "failed" => BgFailed,
         _ => PanelBg

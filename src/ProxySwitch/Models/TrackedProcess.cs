@@ -9,7 +9,7 @@ public sealed class TrackedProcess
     public string? CommandLine { get; init; }
     public DateTime? CreatedAt { get; init; }
     public DateTime? ExitedAt { get; set; }
-    public string Role { get; set; } = "descendant"; // "root", "descendant", or "correlated"
+    public string Role { get; set; } = "descendant"; // "root", "descendant", "correlated", "restarted-child"
     public ProcessTrackingConfidence Confidence { get; set; } = ProcessTrackingConfidence.Descendant;
     public int CorrelationScore { get; set; }
     public List<string> CorrelationReasons { get; } = [];

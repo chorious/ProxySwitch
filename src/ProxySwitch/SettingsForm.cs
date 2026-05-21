@@ -395,13 +395,15 @@ public class SettingsForm : Form
             AllowUserToDeleteRows = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", FillWeight = 22, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 120 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ExePath", HeaderText = "Executable", FillWeight = 36, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 140 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", FillWeight = 16, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 90 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", FillWeight = 18, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "MatchKind", HeaderText = "Match Kind", Width = 90, MinimumWidth = 80 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ExePath", HeaderText = "Executable", FillWeight = 28, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 120 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ResolvedExePath", HeaderText = "Resolved Path", FillWeight = 22, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100, ReadOnly = true });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", FillWeight = 14, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 80 });
         _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy", Width = 70, MinimumWidth = 60 });
         _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", HeaderText = "Enabled", Width = 60, MinimumWidth = 55 });
         _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 60, MinimumWidth = 55, ReadOnly = true });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", FillWeight = 14, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 90, ReadOnly = true });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", FillWeight = 12, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 80, ReadOnly = true });
         ApplyGridTheme(_routeGrid);
 
         p.Controls.Add(_routeGrid);

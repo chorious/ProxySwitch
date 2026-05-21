@@ -19,6 +19,7 @@ public class MainForm : Form
     private SessionManager _sessionManager = null!;
     private ProxiFyreBackend? _backend;
     private ExternalProcessWatcher? _externalWatcher;
+    private SessionSupervisor? _sessionSupervisor;
     private DashboardForm? _dashboard;
 
     public static readonly string RootPath = @"E:\proxyswitch";
@@ -30,6 +31,7 @@ public class MainForm : Form
         SetupServices();
         BuildMenu();
         _tray.Visible = true;
+        try { _tray.ShowBalloonTip(3000, "ProxySwitch", "已启动 · 双击图标打开主窗口", ToolTipIcon.Info); } catch { }
         Logger.Info("ProxySwitch v0.8.2 started");
     }
 
@@ -84,9 +86,13 @@ public class MainForm : Form
 
         _launcher = new AppLauncher(_config);
         _processMonitor = new ProcessMonitor();
-        _backend = new ProxiFyreBackend(_config, _events);
-        _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend);
+        var resolver = new AppIdentityResolver();
+        _backend = new ProxiFyreBackend(_config, _events, resolver);
+        _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend, resolver);
         _sessionManager.RouteActivated += OnRouteActivated;
+
+        _sessionSupervisor = new SessionSupervisor(_sessionManager, _events);
+        _sessionManager.SessionsChanged += () => _sessionSupervisor.RefreshWatcherState(_sessionManager.GetSessions());
 
         // Refresh ProxiFyre's app-config.json on every startup whenever the backend is
         // enabled — drops leftover tmp routes from last run, and (critically) writes an
@@ -116,8 +122,8 @@ public class MainForm : Form
         _externalWatcher = new ExternalProcessWatcher(_config, _events);
         _externalWatcher.ProcessDetected += hit =>
         {
-            try { _sessionManager.AttachExternalLaunch(hit); }
-            catch (Exception ex) { Logger.Error($"AttachExternalLaunch failed: {ex.Message}"); }
+            try { _sessionManager.HandleProcessStarted(hit); }
+            catch (Exception ex) { Logger.Error($"HandleProcessStarted failed: {ex.Message}"); }
         };
         _externalWatcher.Start();
     }
@@ -138,6 +144,7 @@ public class MainForm : Form
         }
         try { _sessionManager?.Dispose(); } catch { }
         try { _externalWatcher?.Dispose(); } catch { }
+        try { _sessionSupervisor?.Dispose(); } catch { }
         _monitor = null!;
         _processMonitor = null!;
         _sessionManager = null!;

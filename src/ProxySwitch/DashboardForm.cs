@@ -31,7 +31,6 @@ public class DashboardForm : Form
     private ToolStripStatusLabel _statusBackend = null!;
     private ToolStripStatusLabel _statusSystem = null!;
     private ToolStripStatusLabel _statusVersion = null!;
-    private UI.TopTabStrip _topTabStrip = null!;
     private System.Windows.Forms.Timer _refreshTimer = null!;
     private bool _correlatedDialogOpen;
     private readonly Queue<(LaunchSession Session, List<HandoffCandidate> Candidates)> _pendingCorrelated = new();
@@ -388,44 +387,35 @@ public class DashboardForm : Form
         _statusStrip.Items.AddRange(new ToolStripItem[] { _statusBackend, _statusSystem, _statusVersion });
         Controls.Add(_statusStrip);
 
-        // Top tab strip — visual navigation (PR3b). Added LAST so its Dock=Top
-        // wins the top slice over mainLayout's Fill; StatusStrip already claimed
-        // the bottom. Strip raises TabClicked; this form dispatches.
-        _topTabStrip = new UI.TopTabStrip();
-        _topTabStrip.TabClicked += OnTopTabClicked;
-        Controls.Add(_topTabStrip);
+        // Header bar with standalone Settings button (replaces the four-tab
+        // TopTabStrip — Launch/Sessions/Settings/Logs were not true tabs in a
+        // single-page dashboard, so the strip created false expectations).
+        var headerPanel = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 40,
+            BackColor = UI.Theme.WindowBg
+        };
+        var settingsBtn = new Button
+        {
+            Text = "⚙",
+            Font = new Font("Segoe UI", 12f),
+            Size = new Size(32, 32),
+            FlatStyle = FlatStyle.Flat,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            BackColor = UI.Theme.WindowBg,
+            ForeColor = UI.Theme.TextSecondary,
+            Cursor = Cursors.Hand
+        };
+        settingsBtn.FlatAppearance.BorderSize = 0;
+        settingsBtn.Click += (_, _) => SettingsRequested?.Invoke();
+        headerPanel.Controls.Add(settingsBtn);
+        settingsBtn.Location = new Point(headerPanel.Width - 36, 4);
+        Controls.Add(headerPanel);
 
         UpdateProxyStatus();
         RefreshSessions();
         RefreshEvents();
-    }
-
-    private void OnTopTabClicked(string tab)
-    {
-        switch (tab)
-        {
-            case "Launch":
-                // No-op — Launch is the default resting view.
-                break;
-            case "Sessions":
-                if (_sessionGrid.Rows.Count > 0)
-                {
-                    _sessionGrid.FirstDisplayedScrollingRowIndex = 0;
-                    _sessionGrid.CurrentCell = _sessionGrid.Rows[0].Cells[0];
-                }
-                _sessionGrid.Focus();
-                break;
-            case "Settings":
-                // Delegate to MainForm so DialogResult.OK can trigger
-                // ReloadRuntimeServices (the tray menu Settings path).
-                SettingsRequested?.Invoke();
-                break;
-            case "Logs":
-                if (_eventList.Items.Count > 0)
-                    _eventList.TopIndex = _eventList.Items.Count - 1;
-                _eventList.Focus();
-                break;
-        }
     }
 
     private string LabelForProxy(string proxyId, string fallback)
@@ -559,7 +549,7 @@ public class DashboardForm : Form
 
         // System state — derive from session counts + backend running.
         var sessions = _sessions.GetSessions();
-        int active = sessions.Count(s => s.Status is "running" or "running-via-child" or "running-via-correlated");
+        int active = sessions.Count(s => s.Status is "running" or "running-via-child" or "running-via-correlated" or "waiting-for-restart");
         string systemText = active > 0
             ? $"System: Routed · {active} active session{(active == 1 ? "" : "s")}"
             : "System: Idle";
@@ -777,7 +767,7 @@ public class DashboardForm : Form
     private List<string> ComputeActionSegments(Models.LaunchSession session)
     {
         var list = new List<string>();
-        bool isLive = session.Status is "running" or "running-via-child" or "running-via-correlated";
+        bool isLive = session.Status is "running" or "running-via-child" or "running-via-correlated" or "waiting-for-restart";
         bool isChecking = session.Status == "checking-correlated";
 
         if (isLive)
@@ -1022,6 +1012,7 @@ public class DashboardForm : Form
         "running-via-child" => "Via child",
         "running-via-correlated" => "Via correlated",
         "checking-correlated" => "Checking...",
+        "waiting-for-restart" => "Waiting for restart",
         "exited" => "Exited",
         "failed" => "Failed",
         _ => session.Status
