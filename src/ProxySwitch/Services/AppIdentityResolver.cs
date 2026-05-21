@@ -38,8 +38,11 @@ public class AppIdentityResolver
             };
             using var proc = Process.Start(psi);
             if (proc == null) return null;
-            var json = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(5000);
+            var readTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
+            var exited = proc.WaitForExit(5000);
+            if (!exited) { try { proc.Kill(); } catch { } return null; }
+            if (!readTask.Wait(TimeSpan.FromSeconds(2))) return null;
+            var json = readTask.Result;
             if (proc.ExitCode != 0) return null;
 
             using var doc = JsonDocument.Parse(json);
@@ -98,8 +101,11 @@ public class AppIdentityResolver
             };
             using var proc = Process.Start(psi);
             if (proc == null) return false;
-            var json = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(5000);
+            var readTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
+            var exited = proc.WaitForExit(5000);
+            if (!exited) { try { proc.Kill(); } catch { } return false; }
+            if (!readTask.Wait(TimeSpan.FromSeconds(2))) return false;
+            var json = readTask.Result;
             if (proc.ExitCode != 0) return false;
 
             using var doc = JsonDocument.Parse(json);
@@ -175,5 +181,37 @@ public class AppIdentityResolver
             _ => route.ExePath
         };
         return $"{kind}:{proxyId}:{identity}";
+    }
+
+    /// <summary>
+    /// One-time migration: for any persistent route whose MatchKind is "path" and
+    /// whose ExePath lives under WindowsApps, attempt to resolve the MSIX package
+    /// identity and convert the route to "msix-package". Mutates routes in-place.
+    /// </summary>
+    public static int MigrateWindowsAppsRoutes(List<AppRoute> routes, EventStore events)
+    {
+        int migrated = 0;
+        var windowsApps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
+        var fullWindowsApps = Path.GetFullPath(windowsApps);
+
+        foreach (var route in routes)
+        {
+            if (route.MatchKind != "path") continue;
+            if (string.IsNullOrEmpty(route.ExePath)) continue;
+            var fullExe = Path.GetFullPath(route.ExePath);
+            if (!fullExe.StartsWith(fullWindowsApps, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (TryResolveMsixIdentity(route.ExePath, out var pfn, out var relExe))
+            {
+                route.MatchKind = "msix-package";
+                route.PackageFamilyName = pfn;
+                route.PackageRelativeExePath = relExe;
+                route.ResolvedExePath = fullExe;
+                route.ResolvedAt = DateTime.Now;
+                events.Add("AppRouteMigrated", $"{route.Name}: path -> msix-package ({pfn})");
+                migrated++;
+            }
+        }
+        return migrated;
     }
 }

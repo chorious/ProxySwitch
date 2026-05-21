@@ -91,6 +91,15 @@ public class MainForm : Form
         _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend, resolver);
         _sessionManager.RouteActivated += OnRouteActivated;
 
+        // One-time migration: existing WindowsApps routes -> msix-package (Fix #1).
+        // No-op for routes already migrated; safe to call on every startup.
+        var migrated = AppIdentityResolver.MigrateWindowsAppsRoutes(_config.AppRoutes, _events);
+        if (migrated > 0)
+        {
+            try { _backend.SaveSwitchConfig(); }
+            catch { }
+        }
+
         _sessionSupervisor = new SessionSupervisor(_sessionManager, _events);
         _sessionManager.SessionsChanged += () => _sessionSupervisor.RefreshWatcherState(_sessionManager.GetSessions());
 

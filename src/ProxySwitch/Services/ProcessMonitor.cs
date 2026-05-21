@@ -159,6 +159,36 @@ public class ProcessMonitor : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Walk the parent chain of <paramref name="pid"/> up to <paramref name="maxDepth"/>
+    /// levels using WMI. Returns true if any ancestor PID is in <paramref name="ancestorPids"/>.
+    /// </summary>
+    internal static bool IsAncestorOfAny(int pid, HashSet<int> ancestorPids, int maxDepth = 5)
+    {
+        try
+        {
+            var parentMap = new Dictionary<int, int?>();
+            using var searcher = new ManagementObjectSearcher("SELECT ProcessId, ParentProcessId FROM Win32_Process");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                parentMap[Convert.ToInt32(obj["ProcessId"])] = obj["ParentProcessId"] != null ? Convert.ToInt32(obj["ParentProcessId"]) : null;
+            }
+
+            var visited = new HashSet<int> { pid };
+            int current = pid;
+            int depth = 0;
+            while (parentMap.TryGetValue(current, out var parent) && parent.HasValue && depth < maxDepth)
+            {
+                if (ancestorPids.Contains(parent.Value)) return true;
+                if (!visited.Add(parent.Value)) break; // cycle guard
+                current = parent.Value;
+                depth++;
+            }
+            return false;
+        }
+        catch { return false; }
+    }
+
     private static List<TrackedProcess> GetLightProcessTable()
     {
         var result = new List<TrackedProcess>();

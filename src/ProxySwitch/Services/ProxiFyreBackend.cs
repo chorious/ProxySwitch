@@ -388,7 +388,8 @@ public class ProxiFyreBackend
             RoutingHints = _config.RoutingHints,
             RuleHintPresets = _config.RuleHintPresets,
             TransparentBackend = _config.TransparentBackend,
-            AppRoutes = persistent
+            AppRoutes = persistent,
+            SessionSupervisor = _config.SessionSupervisor
         };
         var opts = new JsonSerializerOptions
         {

@@ -7,6 +7,7 @@ public sealed class SessionManager : IDisposable
     private readonly List<LaunchSession> _sessions = new();
     private readonly Dictionary<string, Task<List<ProcessSnapshot>>> _baselines = new();
     private readonly Dictionary<string, CancellationTokenSource> _sessionCts = new();
+    private readonly Dictionary<string, DateTime> _lastChildRouteTime = new();
     private readonly AppLauncher _launcher;
     private readonly ProcessMonitor _processMonitor;
     private readonly EventStore _events;
@@ -381,6 +382,55 @@ public sealed class SessionManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Callback fired when a merged (late or restarted) child process exits.
+    /// Mirrors the root-exit logic: if other live processes remain, transition
+    /// to running-via-child; otherwise begin grace window or finalize.
+    /// </summary>
+    private void OnMergedProcessExited(LaunchSession session, int pid)
+    {
+        if (session.Status is "exited" or "failed") return;
+        MarkProcessExited(session, pid);
+        _events.Add("ProcessExited", $"{session.Name}: merged process exited (PID={pid})");
+
+        if (session.HasLiveProcesses)
+        {
+            session.Status = "running-via-child";
+            session.IsLauncherHandoffDetected = true;
+            _events.Add("LauncherHandoffDetected", $"{session.Name}: merged process exited, others still running");
+            SessionsChanged?.Invoke();
+        }
+        else
+        {
+            BeginGraceWindowOrFinalize(session, "all merged processes exited");
+        }
+    }
+
+    /// <summary>
+    /// After a grace-window reattach, MonitorDescendantsAsync may have exited
+    /// because HasLiveProcesses was false. Re-start it if no active monitor CTS
+    /// exists for this session.
+    /// </summary>
+    private void RestartMonitorIfNeeded(LaunchSession session)
+    {
+        CancellationTokenSource? cts;
+        lock (_sessionCts) _sessionCts.TryGetValue(session.Id, out cts);
+
+        bool needsNew = cts == null || cts.IsCancellationRequested;
+        if (needsNew)
+        {
+            cts = new CancellationTokenSource();
+            lock (_sessionCts) _sessionCts[session.Id] = cts;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try { await MonitorDescendantsAsync(session, cts!.Token); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { Logger.Error($"MonitorDescendants for {session.Name} failed: {ex.Message}"); }
+        });
+    }
+
     private async Task TryCorrelatedHandoffAsync(LaunchSession session, Task<List<ProcessSnapshot>> baselineTask)
     {
         if (session.Status is "exited" or "failed") return; // stopped before we got here
@@ -594,21 +644,32 @@ public sealed class SessionManager : IDisposable
 
                 string? role = null;
 
-                // 1) Parent chain match
-                if (hit.ParentProcessId.HasValue && session.Processes.Any(p => p.ProcessId == hit.ParentProcessId.Value && p.ExitedAt == null))
+                // 1) Parent chain match (walk up to 5 levels via WMI)
+                if (hit.ParentProcessId.HasValue)
                 {
-                    role = "descendant";
+                    var livePids = session.Processes
+                        .Where(p => p.ExitedAt == null)
+                        .Select(p => p.ProcessId)
+                        .ToHashSet();
+                    if (ProcessMonitor.IsAncestorOfAny(hit.ProcessId, livePids))
+                        role = "descendant";
                 }
 
-                // 2) Route identity match (ExePath / ResolvedExePath)
+                // 2) Route identity match (strict stable-key comparison)
+                // Only merge if the hit matches the SAME route the session was created for.
                 if (role == null)
                 {
-                    var route = _config.AppRoutes.FirstOrDefault(r =>
+                    var hitRoute = _config.AppRoutes.FirstOrDefault(r =>
                         r.ProxyId == session.ProxyId && r.Enabled &&
                         (!string.IsNullOrEmpty(hit.ExecutablePath) &&
                          (string.Equals(r.ExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase)
                           || string.Equals(r.ResolvedExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase))));
-                    if (route != null) role = "descendant";
+                    if (hitRoute != null)
+                    {
+                        var sessionRouteKey = GuessSessionRouteKey(session);
+                        var hitRouteKey = _resolver.GetStableRouteKey(hitRoute);
+                        if (sessionRouteKey == hitRouteKey) role = "descendant";
+                    }
                 }
 
                 // 3) Process name match
@@ -651,15 +712,59 @@ public sealed class SessionManager : IDisposable
                         CreatedAt = rootCreatedAt
                     });
 
+                    // Register exit tracking for merged processes so the session
+                    // transitions correctly when they die (Fix #2).
+                    _processMonitor.TrackPid(hit.ProcessId, () => OnMergedProcessExited(session, hit.ProcessId));
+
                     if (isRestart)
                     {
                         session.Status = "running";
                         _events.Add("ProcessReattached", $"{session.Name}: {hit.Name} (PID={hit.ProcessId}) reattached during grace window");
+
+                        // Re-start descendant monitor if it exited during the grace window
+                        // (MonitorDescendantsAsync loop ends when HasLiveProcesses is false).
+                        RestartMonitorIfNeeded(session);
                     }
                     else
                     {
                         _events.Add("ProcessMerged", $"{session.Name}: {hit.Name} (PID={hit.ProcessId}) merged into existing session ({role})");
                     }
+
+                    // Ensure new child executable gets a ProxiFyre route (Fix #5).
+                    if (!string.IsNullOrEmpty(hit.ExecutablePath) &&
+                        _backend != null &&
+                        !session.Processes.Any(p => p.ProcessId != hit.ProcessId &&
+                            string.Equals(p.ExecutablePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        bool shouldRoute;
+                        lock (_lastChildRouteTime)
+                        {
+                            var now = DateTime.Now;
+                            shouldRoute = !_lastChildRouteTime.TryGetValue(session.Id, out var last) || (now - last).TotalSeconds >= 2;
+                            if (shouldRoute) _lastChildRouteTime[session.Id] = now;
+                        }
+                        if (shouldRoute)
+                        {
+                            try
+                            {
+                                _backend.EnsureRoute(hit.ExecutablePath, session.ProxyId!,
+                                    source: "child-detected",
+                                    isPersistent: session.IsPersistentLaunch,
+                                    sessionId: session.IsPersistentLaunch ? null : session.Id);
+                                _backend.WriteConfig();
+
+                                CancellationTokenSource? cts;
+                                lock (_sessionCts) _sessionCts.TryGetValue(session.Id, out cts);
+                                var token = cts?.Token ?? CancellationToken.None;
+                                _ = Task.Run(() => ApplyRoutingInBackgroundAsync(session, token));
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Error($"Child route ensure failed: {ex.Message}");
+                            }
+                        }
+                    }
+
                     SessionsChanged?.Invoke();
                     return true;
                 }
