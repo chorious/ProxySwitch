@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ProxySwitch.Models;
 using ProxySwitch.UI;
 
 namespace ProxySwitch.Controls;
@@ -27,7 +28,7 @@ public sealed class LaunchZoneControl : Panel
     private Color _hoverFill = Color.FromArgb(72, Color.Gray);
     private bool _isHover;
 
-    public event Action<string>? FileDropped;
+    public event Action<LaunchTarget>? TargetDropped;
 
     public LaunchZoneControl()
     {
@@ -122,7 +123,7 @@ public sealed class LaunchZoneControl : Panel
             var target = ResolveShortcut(first);
             if (!string.IsNullOrEmpty(target) && target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             {
-                FileDropped?.Invoke(target);
+                TargetDropped?.Invoke(new LaunchTarget { LaunchKind = "exe", ExePath = target, ShortcutPath = first });
                 return;
             }
             MessageBox.Show(
@@ -133,7 +134,7 @@ public sealed class LaunchZoneControl : Panel
 
         if (ext == ".exe")
         {
-            FileDropped?.Invoke(first);
+            TargetDropped?.Invoke(new LaunchTarget { LaunchKind = "exe", ExePath = first });
             return;
         }
 

@@ -7,6 +7,7 @@ public sealed class SessionManager : IDisposable
     private readonly List<LaunchSession> _sessions = new();
     private readonly Dictionary<string, Task<List<ProcessSnapshot>>> _baselines = new();
     private readonly Dictionary<string, CancellationTokenSource> _sessionCts = new();
+    private readonly HashSet<string> _activeDescendantMonitors = new();
     private readonly Dictionary<string, DateTime> _lastChildRouteTime = new();
     private readonly AppLauncher _launcher;
     private readonly ProcessMonitor _processMonitor;
@@ -162,7 +163,7 @@ public sealed class SessionManager : IDisposable
 
         // Ensure ProxiFyre route BEFORE launch so the new process is matched.
         // Returns the routing label that should appear on the session card.
-        string routingStatus = ResolveInitialRoutingStatus(exePath, mode, proxyId, isPersistentRoute, sessionId);
+        var (routingStatus, routeKey) = ResolveInitialRoutingStatus(exePath, mode, proxyId, isPersistentRoute, sessionId);
 
         var result = _launcher.LaunchGeneric(exePath);
 
@@ -214,7 +215,8 @@ public sealed class SessionManager : IDisposable
             RootCreatedAt = rootCreatedAt,
             Status = "running",
             RoutingStatus = routingStatus,
-            IsPersistentLaunch = isPersistentRoute
+            IsPersistentLaunch = isPersistentRoute,
+            RouteKey = routeKey
         };
 
         if (result.ProcessId.HasValue)
@@ -303,15 +305,7 @@ public sealed class SessionManager : IDisposable
                 }
             });
 
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await MonitorDescendantsAsync(session, cts.Token);
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { Logger.Error($"MonitorDescendants for {name} failed: {ex.Message}"); }
-            });
+            StartDescendantMonitor(session, cts);
 
             // Launch-first / apply-async (plan_opus_v0.7): if we picked launching status,
             // drive the UAC + sc restart in the background so the user isn't waiting 13s
@@ -330,6 +324,135 @@ public sealed class SessionManager : IDisposable
             Arguments = result.Arguments,
             Session = session
         };
+    }
+
+    public LaunchResult LaunchTarget(LaunchTarget target, string name, string? proxyId = null, bool isPersistentRoute = true)
+    {
+        _events.Add("SessionCreated", $"Session for {name}");
+        _events.Add("LaunchStarted", $"Starting {name} ({target.LaunchKind})");
+
+        var sessionId = Guid.NewGuid().ToString("N")[..8];
+
+        var (routingStatus, routeKey) = ResolveInitialRoutingStatusForTarget(target, proxyId, isPersistentRoute, sessionId);
+
+        var result = _launcher.LaunchTarget(target);
+
+        if (!result.Success)
+        {
+            if (!isPersistentRoute && _backend != null && !string.IsNullOrEmpty(proxyId)
+                && routingStatus.StartsWith("proxifyre-", StringComparison.Ordinal))
+            {
+                try
+                {
+                    if (target.LaunchKind == "exe" && !string.IsNullOrEmpty(target.ExePath))
+                    {
+                        if (_backend.RemoveRouteByExe(target.ExePath, proxyId))
+                        {
+                            _backend.WriteConfig();
+                            _events.Add("AppRouteRolledBackFlushed", $"{name}: route removed from app-config.json after failed launch");
+                        }
+                    }
+                    else if (target.LaunchKind == "app-user-model-id")
+                    {
+                        var route = _config.AppRoutes.FirstOrDefault(r =>
+                            r.ProxyId == proxyId && r.LaunchKind == "app-user-model-id" && r.AppUserModelId == target.AppUserModelId);
+                        if (route != null)
+                        {
+                            _backend.RemoveRoute(route.Id);
+                            _backend.WriteConfig();
+                            _events.Add("AppRouteRolledBackFlushed", $"{name}: AUMID route removed from app-config.json after failed launch");
+                        }
+                    }
+                }
+                catch (Exception ex) { Logger.Error($"Rollback after launch fail: {ex.Message}"); }
+            }
+            _events.Add("LaunchFailed", $"{name}: {result.Error}");
+            return result;
+        }
+
+        var rootCreatedAt = result.ProcessId.HasValue
+            ? (ProcessMonitor.GetProcessStartTime(result.ProcessId.Value) ?? DateTime.Now)
+            : DateTime.Now;
+
+        var session = new LaunchSession
+        {
+            Id = sessionId,
+            Name = name,
+            ExePath = target.ExePath,
+            Kind = "generic",
+            Mode = proxyId == null ? "direct" : "proxy",
+            ProxyId = proxyId,
+            RootProcessId = result.ProcessId,
+            RootCreatedAt = rootCreatedAt,
+            Status = "running",
+            RoutingStatus = routingStatus,
+            IsPersistentLaunch = isPersistentRoute,
+            RouteKey = routeKey
+        };
+
+        if (result.ProcessId.HasValue)
+        {
+            session.Processes.Add(new TrackedProcess
+            {
+                ProcessId = result.ProcessId.Value,
+                Name = !string.IsNullOrEmpty(target.ProcessName) ? target.ProcessName : Path.GetFileName(target.ExePath),
+                ExecutablePath = target.ExePath,
+                Role = "root",
+                CreatedAt = rootCreatedAt
+            });
+        }
+
+        AddSession(session);
+
+        if (session.RoutingStatus == "proxifyre-route-launching")
+        {
+            CancellationTokenSource? cts;
+            lock (_sessionCts) _sessionCts.TryGetValue(session.Id, out cts);
+            var token = cts?.Token ?? CancellationToken.None;
+            _ = Task.Run(() => ApplyRoutingInBackgroundAsync(session, token));
+        }
+
+        return new LaunchResult
+        {
+            Success = true,
+            ProcessId = result.ProcessId,
+            Arguments = result.Arguments,
+            Session = session
+        };
+    }
+
+    private (string RoutingStatus, string RouteKey) ResolveInitialRoutingStatusForTarget(LaunchTarget target, string? proxyId, bool isPersistentRoute, string sessionId)
+    {
+        if (string.IsNullOrEmpty(proxyId))
+            return ("direct", "");
+
+        if (_backend == null || !_config.TransparentBackend.Enabled || _config.TransparentBackend.Type != "proxifyre")
+            return ("external-routing-required", "");
+
+        var status = _backend.GetStatus();
+        switch (status.State)
+        {
+            case "not-configured":
+            case "exe-missing":
+            case "service-not-installed":
+            case "disabled":
+                _events.Add("BackendNotReady", $"ProxiFyre: {status.State} — {status.Message}");
+                return ("external-routing-required", "");
+        }
+
+        try
+        {
+            var source = isPersistentRoute ? "store-app-set" : "store-app-tmp";
+            var result = _backend.EnsureRoute(target, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId);
+            _backend.WriteConfig();
+            return ("proxifyre-route-launching", result.RouteKey);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"ResolveInitialRoutingStatusForTarget failed for {target.DisplayName}: {ex.Message}");
+            _events.Add("BackendApplyFailed", ex.Message);
+            return ("proxifyre-route-failed", "");
+        }
     }
 
     private async Task MonitorDescendantsAsync(LaunchSession session, CancellationToken ct)
@@ -406,29 +529,47 @@ public sealed class SessionManager : IDisposable
         }
     }
 
-    /// <summary>
-    /// After a grace-window reattach, MonitorDescendantsAsync may have exited
-    /// because HasLiveProcesses was false. Re-start it if no active monitor CTS
-    /// exists for this session.
-    /// </summary>
-    private void RestartMonitorIfNeeded(LaunchSession session)
+    private void StartDescendantMonitor(LaunchSession session, CancellationTokenSource cts)
     {
-        CancellationTokenSource? cts;
-        lock (_sessionCts) _sessionCts.TryGetValue(session.Id, out cts);
-
-        bool needsNew = cts == null || cts.IsCancellationRequested;
-        if (needsNew)
+        lock (_activeDescendantMonitors)
         {
-            cts = new CancellationTokenSource();
-            lock (_sessionCts) _sessionCts[session.Id] = cts;
+            if (!_activeDescendantMonitors.Add(session.Id)) return;
         }
 
         _ = Task.Run(async () =>
         {
-            try { await MonitorDescendantsAsync(session, cts!.Token); }
+            try { await MonitorDescendantsAsync(session, cts.Token); }
             catch (OperationCanceledException) { }
             catch (Exception ex) { Logger.Error($"MonitorDescendants for {session.Name} failed: {ex.Message}"); }
+            finally
+            {
+                lock (_activeDescendantMonitors)
+                {
+                    _activeDescendantMonitors.Remove(session.Id);
+                }
+            }
         });
+    }
+
+    /// <summary>
+    /// After a grace-window reattach, MonitorDescendantsAsync may have exited
+    /// because HasLiveProcesses was false. Start exactly one replacement monitor
+    /// for this session.
+    /// </summary>
+    private void RestartMonitorIfNeeded(LaunchSession session)
+    {
+        CancellationTokenSource? cts;
+        lock (_sessionCts)
+        {
+            _sessionCts.TryGetValue(session.Id, out cts);
+            if (cts == null || cts.IsCancellationRequested)
+            {
+                cts = new CancellationTokenSource();
+                _sessionCts[session.Id] = cts;
+            }
+        }
+
+        StartDescendantMonitor(session, cts);
     }
 
     private async Task TryCorrelatedHandoffAsync(LaunchSession session, Task<List<ProcessSnapshot>> baselineTask)
@@ -652,14 +793,19 @@ public sealed class SessionManager : IDisposable
                 if (string.IsNullOrEmpty(session.ProxyId)) continue;
 
                 // Check if this PID is already tracked
-                if (session.Processes.Any(p => p.ProcessId == hit.ProcessId)) return true;
+                List<TrackedProcess> processSnapshot;
+                lock (session.Processes)
+                {
+                    if (session.Processes.Any(p => p.ProcessId == hit.ProcessId)) return true;
+                    processSnapshot = session.Processes.ToList();
+                }
 
                 string? role = null;
 
                 // 1) Parent chain match (using pre-built map)
                 if (hit.ParentProcessId.HasValue && parentMap != null)
                 {
-                    var livePids = session.Processes
+                    var livePids = processSnapshot
                         .Where(p => p.ExitedAt == null)
                         .Select(p => p.ProcessId)
                         .ToHashSet();
@@ -678,9 +824,8 @@ public sealed class SessionManager : IDisposable
                           || string.Equals(r.ResolvedExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase))));
                     if (hitRoute != null)
                     {
-                        var sessionRouteKey = GuessSessionRouteKey(session);
                         var hitRouteKey = _resolver.GetStableRouteKey(hitRoute);
-                        if (sessionRouteKey == hitRouteKey) role = "descendant";
+                        if (session.RouteKey == hitRouteKey) role = "descendant";
                     }
                 }
 
@@ -692,14 +837,13 @@ public sealed class SessionManager : IDisposable
                         string.Equals(AppIdentityResolver.NormalizeProcessName(r.ProcessName), hit.Name, StringComparison.OrdinalIgnoreCase));
                     if (route != null)
                     {
-                        var sessionRouteKey = GuessSessionRouteKey(session);
                         var routeKey = _resolver.GetStableRouteKey(route);
-                        if (sessionRouteKey == routeKey) role = "descendant";
+                        if (session.RouteKey == routeKey) role = "descendant";
                     }
                 }
 
-                // 4) Same directory heuristic
-                if (role == null && !string.IsNullOrEmpty(hit.ExecutablePath))
+                // 4) Same directory heuristic — only when route key is unavailable
+                if (role == null && !string.IsNullOrEmpty(hit.ExecutablePath) && string.IsNullOrEmpty(session.RouteKey))
                 {
                     var hitDir = Path.GetDirectoryName(hit.ExecutablePath);
                     var sessionDir = Path.GetDirectoryName(session.ExePath);
@@ -725,73 +869,89 @@ public sealed class SessionManager : IDisposable
 
         // Phase 2: mutate the session under a brief lock.
         bool isRestart;
+        bool shouldEnsureChildRoute = false;
+        string eventName;
+        string eventMessage;
         lock (_sessions)
         {
             // Re-validate: the session may have changed since we released the lock.
             if (matchedSession.Status is "exited" or "failed") return false;
-            if (matchedSession.Processes.Any(p => p.ProcessId == hit.ProcessId)) return true;
-
-            var rootCreatedAt = processStartTime ?? DateTime.Now;
-            isRestart = matchedSession.Status == "waiting-for-restart";
-            matchedSession.Processes.Add(new TrackedProcess
+            lock (matchedSession.Processes)
             {
-                ProcessId = hit.ProcessId,
-                ParentProcessId = hit.ParentProcessId,
-                Name = hit.Name,
-                ExecutablePath = hit.ExecutablePath,
-                Role = isRestart ? "restarted-child" : matchedRole,
-                CreatedAt = rootCreatedAt
-            });
+                if (matchedSession.Processes.Any(p => p.ProcessId == hit.ProcessId)) return true;
 
-            // Register exit tracking for merged processes so the session
-            // transitions correctly when they die (Fix #2).
-            _processMonitor.TrackPid(hit.ProcessId, () => OnMergedProcessExited(matchedSession, hit.ProcessId));
+                shouldEnsureChildRoute = !string.IsNullOrEmpty(hit.ExecutablePath) &&
+                    !matchedSession.Processes.Any(p =>
+                        string.Equals(p.ExecutablePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase));
+
+                var rootCreatedAt = processStartTime ?? DateTime.Now;
+                isRestart = matchedSession.Status == "waiting-for-restart";
+                matchedSession.Processes.Add(new TrackedProcess
+                {
+                    ProcessId = hit.ProcessId,
+                    ParentProcessId = hit.ParentProcessId,
+                    Name = hit.Name,
+                    ExecutablePath = hit.ExecutablePath,
+                    Role = isRestart ? "restarted-child" : matchedRole,
+                    CreatedAt = rootCreatedAt
+                });
+            }
 
             if (isRestart)
             {
                 matchedSession.Status = "running";
-                _events.Add("ProcessReattached", $"{matchedSession.Name}: {hit.Name} (PID={hit.ProcessId}) reattached during grace window");
-
-                // Re-start descendant monitor if it exited during the grace window
-                // (MonitorDescendantsAsync loop ends when HasLiveProcesses is false).
-                RestartMonitorIfNeeded(matchedSession);
+                eventName = "ProcessReattached";
+                eventMessage = $"{matchedSession.Name}: {hit.Name} (PID={hit.ProcessId}) reattached during grace window";
             }
             else
             {
-                _events.Add("ProcessMerged", $"{matchedSession.Name}: {hit.Name} (PID={hit.ProcessId}) merged into existing session ({matchedRole})");
+                eventName = "ProcessMerged";
+                eventMessage = $"{matchedSession.Name}: {hit.Name} (PID={hit.ProcessId}) merged into existing session ({matchedRole})";
             }
-
-            SessionsChanged?.Invoke();
         }
+
+        // Register exit tracking and raise notifications outside _sessions lock.
+        _processMonitor.TrackPid(hit.ProcessId, () => OnMergedProcessExited(matchedSession, hit.ProcessId));
+        _events.Add(eventName, eventMessage);
+        if (isRestart)
+            RestartMonitorIfNeeded(matchedSession);
+        SessionsChanged?.Invoke();
 
         // Phase 3: backend work (EnsureRoute + WriteConfig + ApplyRouting) completely
         // outside the lock so we don't block session reads or UI refresh.
         if (!string.IsNullOrEmpty(hit.ExecutablePath) &&
             _backend != null &&
-            !matchedSession.Processes.Any(p => p.ProcessId != hit.ProcessId &&
-                string.Equals(p.ExecutablePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase)))
+            shouldEnsureChildRoute)
         {
             bool shouldRoute;
+            var debounceKey = $"{matchedSession.Id}|{hit.ExecutablePath?.ToLowerInvariant() ?? ""}|{matchedSession.ProxyId}";
             lock (_lastChildRouteTime)
             {
                 var now = DateTime.Now;
-                shouldRoute = !_lastChildRouteTime.TryGetValue(matchedSession.Id, out var last) || (now - last).TotalSeconds >= 2;
-                if (shouldRoute) _lastChildRouteTime[matchedSession.Id] = now;
+                shouldRoute = !_lastChildRouteTime.TryGetValue(debounceKey, out var last) || (now - last).TotalSeconds >= 2;
+                if (shouldRoute) _lastChildRouteTime[debounceKey] = now;
             }
             if (shouldRoute)
             {
                 try
                 {
-                    _backend.EnsureRoute(hit.ExecutablePath, matchedSession.ProxyId!,
+                    var childResult = _backend.EnsureRoute(hit.ExecutablePath ?? "", matchedSession.ProxyId!,
                         source: "child-detected",
                         isPersistent: matchedSession.IsPersistentLaunch,
                         sessionId: matchedSession.IsPersistentLaunch ? null : matchedSession.Id);
-                    _backend.WriteConfig();
-
-                    CancellationTokenSource? cts;
-                    lock (_sessionCts) _sessionCts.TryGetValue(matchedSession.Id, out cts);
-                    var token = cts?.Token ?? CancellationToken.None;
-                    _ = Task.Run(() => ApplyRoutingInBackgroundAsync(matchedSession, token));
+                    if (childResult.Changed)
+                    {
+                        _backend.WriteConfig();
+                        CancellationTokenSource? cts;
+                        lock (_sessionCts) _sessionCts.TryGetValue(matchedSession.Id, out cts);
+                        var token = cts?.Token ?? CancellationToken.None;
+                        _ = Task.Run(() => ApplyRoutingInBackgroundAsync(matchedSession, token));
+                        _events.Add("ChildRouteAdded", $"{matchedSession.Name}: child {hit.Name} routed via {matchedSession.ProxyId}");
+                    }
+                    else
+                    {
+                        _events.Add("ChildRouteSkipped", $"{matchedSession.Name}: child {hit.Name} route unchanged (duplicate)");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -809,20 +969,25 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     private string GuessSessionRouteKey(LaunchSession session)
     {
-        var liveProcess = session.Processes.FirstOrDefault(p => p.ExitedAt == null);
+        TrackedProcess? liveProcess;
+        lock (session.Processes)
+        {
+            liveProcess = session.Processes.FirstOrDefault(p => p.ExitedAt == null);
+        }
         var exePath = liveProcess?.ExecutablePath ?? session.ExePath;
         var name = liveProcess?.Name ?? Path.GetFileName(session.ExePath);
 
         var route = _config.AppRoutes.FirstOrDefault(r =>
             r.ProxyId == session.ProxyId && r.Enabled &&
             (string.Equals(r.ExePath, exePath, StringComparison.OrdinalIgnoreCase)
+             || string.Equals(r.ResolvedExePath, exePath, StringComparison.OrdinalIgnoreCase)
              || string.Equals(AppIdentityResolver.NormalizeProcessName(r.ProcessName), name, StringComparison.OrdinalIgnoreCase)));
 
         if (route != null) return _resolver.GetStableRouteKey(route);
 
         // Fallback: derive from session itself
         var identity = string.IsNullOrEmpty(session.ExePath)
-            ? AppIdentityResolver.NormalizeProcessName(Path.GetFileName(session.ExePath))
+            ? AppIdentityResolver.NormalizeProcessName(name)
             : session.ExePath;
         return $"path:{session.ProxyId}:{identity}";
     }
@@ -850,10 +1015,53 @@ public sealed class SessionManager : IDisposable
         var route = _config.AppRoutes.FirstOrDefault(r =>
             r.IsPersistent && r.Enabled &&
             ((!string.IsNullOrEmpty(hit.ExecutablePath) && string.Equals(r.ExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+             || (!string.IsNullOrEmpty(hit.ExecutablePath) && string.Equals(r.ResolvedExePath, hit.ExecutablePath, StringComparison.OrdinalIgnoreCase))
              || (!string.IsNullOrEmpty(hit.Name) && string.Equals(AppIdentityResolver.NormalizeProcessName(r.ProcessName), hit.Name, StringComparison.OrdinalIgnoreCase))));
         if (route == null) return false;
 
+        var routeKey = _resolver.GetStableRouteKey(route);
         var rootCreatedAt = ProcessMonitor.GetProcessStartTime(hit.ProcessId) ?? DateTime.Now;
+
+        // If an active or waiting-for-restart session already has this route key,
+        // merge into it instead of creating a duplicate card.
+        LaunchSession? existingSession = null;
+        lock (_sessions)
+        {
+            existingSession = _sessions.FirstOrDefault(s =>
+                s.Status is not "exited" and not "failed" &&
+                s.RouteKey == routeKey);
+        }
+
+        if (existingSession != null)
+        {
+            lock (existingSession.Processes)
+            {
+                if (!existingSession.Processes.Any(p => p.ProcessId == hit.ProcessId))
+                {
+                    existingSession.Processes.Add(new TrackedProcess
+                    {
+                        ProcessId = hit.ProcessId,
+                        ParentProcessId = hit.ParentProcessId,
+                        Name = hit.Name,
+                        ExecutablePath = hit.ExecutablePath,
+                        Role = "root",
+                        CreatedAt = rootCreatedAt
+                    });
+                }
+            }
+            if (existingSession.Status == "waiting-for-restart")
+            {
+                existingSession.Status = "running";
+                _events.Add("ProcessReattached", $"{existingSession.Name}: {hit.Name} (PID={hit.ProcessId}) reattached during grace window");
+            }
+            else
+            {
+                _events.Add("ProcessMerged", $"{existingSession.Name}: {hit.Name} (PID={hit.ProcessId}) merged into existing external session");
+            }
+            _processMonitor.TrackPid(hit.ProcessId, () => OnMergedProcessExited(existingSession, hit.ProcessId));
+            SessionsChanged?.Invoke();
+            return true;
+        }
 
         // Build the session OUTSIDE the lock — no shared state — so we hold
         // the lock for the shortest possible critical section.
@@ -872,7 +1080,8 @@ public sealed class SessionManager : IDisposable
             // Persistent route exists in app-config.json + service is running → presumed active.
             // If ProxiFyre is stopped, the route is just not actually intercepting; we don't
             // claim active in that case.
-            RoutingStatus = ResolveExternalRoutingStatus()
+            RoutingStatus = ResolveExternalRoutingStatus(),
+            RouteKey = routeKey
         };
         session.Processes.Add(new TrackedProcess
         {
@@ -932,12 +1141,7 @@ public sealed class SessionManager : IDisposable
 
         // Long-running descendant exit watcher. Without this, the session card
         // never auto-transitions to exited when a launcher's children die.
-        _ = Task.Run(async () =>
-        {
-            try { await MonitorDescendantsAsync(session, cts.Token); }
-            catch (OperationCanceledException) { }
-            catch (Exception ex) { Logger.Error($"MonitorDescendants for {sessionName} failed: {ex.Message}"); }
-        });
+        StartDescendantMonitor(session, cts);
 
         // Root exit: if descendants are alive, transition to running-via-child;
         // otherwise finalize. External sessions skip correlated-handoff detection
@@ -990,14 +1194,14 @@ public sealed class SessionManager : IDisposable
     /// Decide what RoutingStatus the session should start with based on mode and
     /// whether the ProxiFyre backend is configured and able to write a route.
     /// </summary>
-    private string ResolveInitialRoutingStatus(string exePath, string mode, string? proxyId, bool isPersistentRoute, string sessionId)
+    private (string RoutingStatus, string RouteKey) ResolveInitialRoutingStatus(string exePath, string mode, string? proxyId, bool isPersistentRoute, string sessionId)
     {
         if (mode == "direct" || string.IsNullOrEmpty(proxyId))
-            return "direct";
+            return ("direct", "");
 
         // No backend configured → fall back to v0.5 "external router" semantics
         if (_backend == null || !_config.TransparentBackend.Enabled || _config.TransparentBackend.Type != "proxifyre")
-            return "external-routing-required";
+            return ("external-routing-required", "");
 
         var status = _backend.GetStatus();
         // Genuine "can't proceed" cases — exe / service / driver missing.
@@ -1008,7 +1212,7 @@ public sealed class SessionManager : IDisposable
             case "service-not-installed":
             case "disabled":
                 _events.Add("BackendNotReady", $"ProxiFyre: {status.State} — {status.Message}");
-                return "external-routing-required";
+                return ("external-routing-required", "");
         }
 
         // Launch-first / apply-async (plan_opus_v0.7): write config NOW, but defer the
@@ -1018,15 +1222,15 @@ public sealed class SessionManager : IDisposable
         try
         {
             var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
-            _backend.EnsureRoute(exePath, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId);
+            var result = _backend.EnsureRoute(exePath, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId);
             _backend.WriteConfig();
-            return "proxifyre-route-launching";
+            return ("proxifyre-route-launching", result.RouteKey);
         }
         catch (Exception ex)
         {
             Logger.Error($"ResolveInitialRoutingStatus failed for {exePath}: {ex.Message}");
             _events.Add("BackendApplyFailed", ex.Message);
-            return "proxifyre-route-failed";
+            return ("proxifyre-route-failed", "");
         }
     }
 
@@ -1140,13 +1344,13 @@ public sealed class SessionManager : IDisposable
             foreach (var path in exePaths.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrEmpty(path)) continue;
-                _backend.EnsureRoute(
+                var childResult = _backend.EnsureRoute(
                     path,
                     session.ProxyId,
                     source: "child-detected",
                     isPersistent: childPersistent,
                     sessionId: childPersistent ? null : session.Id);
-                routed++;
+                if (childResult.Changed) routed++;
             }
 
             // Write config now, but defer service restart to the background task
@@ -1243,6 +1447,69 @@ public sealed class SessionManager : IDisposable
         // rewrite app-config.json. Will MarkStaleLiveRoutes if anything was removed.
         CleanupSessionRoutes(session);
         SessionsChanged?.Invoke();
+    }
+
+    public void AddSession(LaunchSession session)
+    {
+        lock (_sessions)
+        {
+            _sessions.Add(session);
+        }
+        var cts = new CancellationTokenSource();
+        lock (_sessionCts) _sessionCts[session.Id] = cts;
+        SessionsChanged?.Invoke();
+
+        var rootPid = session.RootProcessId;
+        if (rootPid.HasValue)
+        {
+            var sessionName = session.Name;
+            var rootCreatedAt = session.RootCreatedAt ?? DateTime.Now;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _processMonitor.TrackProcessTreeAsync(
+                        rootPid.Value, rootCreatedAt, durationSeconds: 10,
+                        onDescendant: desc =>
+                        {
+                            lock (session.Processes)
+                            {
+                                if (!session.Processes.Any(p => p.ProcessId == desc.ProcessId))
+                                {
+                                    desc.Role = "descendant";
+                                    session.Processes.Add(desc);
+                                }
+                            }
+                            _events.Add("ChildProcessDetected", $"{sessionName}: child {desc.Name} (PID={desc.ProcessId})");
+                            SessionsChanged?.Invoke();
+                        });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"TrackProcessTreeAsync for {sessionName} failed: {ex.Message}");
+                }
+            });
+
+            _processMonitor.TrackPid(rootPid.Value, () =>
+            {
+                if (session.Status is "exited" or "failed") return;
+                MarkProcessExited(session, rootPid.Value);
+                _events.Add("RootProcessExited", $"{sessionName} root process exited");
+
+                if (session.HasLiveProcesses)
+                {
+                    session.Status = "running-via-child";
+                    session.IsLauncherHandoffDetected = true;
+                    _events.Add("LauncherHandoffDetected", $"{sessionName}: launcher exited, child still running");
+                    SessionsChanged?.Invoke();
+                }
+                else
+                {
+                    BeginGraceWindowOrFinalize(session, "root process exited");
+                }
+            });
+        }
     }
 
     public void RemoveSession(LaunchSession session)

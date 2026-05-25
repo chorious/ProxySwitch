@@ -314,7 +314,7 @@ public class MainForm : Form
     /// </summary>
     private void OpenSettings(IWin32Window? owner = null)
     {
-        using var form = new SettingsForm();
+        using var form = new SettingsForm(_backend);
         if (form.ShowDialog(owner) == DialogResult.OK)
             ReloadRuntimeServices();
     }
@@ -340,18 +340,30 @@ public class MainForm : Form
 
     private void UpdateTrayIcon()
     {
-        bool p10708 = _config.Proxies.Any(p => p.Port == 10708 && _monitor.IsOnline(p.Host, p.Port));
-        bool p10808 = _config.Proxies.Any(p => p.Port == 10808 && _monitor.IsOnline(p.Host, p.Port));
-
-        _tray.Text = $"ProxySwitch | 10708: {(p10708 ? "ON" : "OFF")} | 10808: {(p10808 ? "ON" : "OFF")}";
-
-        Color color = (p10708, p10808) switch
+        int total = _config.Proxies.Count;
+        int online = 0;
+        var compactParts = new List<string>();
+        foreach (var p in _config.Proxies)
         {
-            (true, true) => Color.FromArgb(34, 197, 94),
-            (true, false) => Color.FromArgb(34, 197, 94),
-            (false, true) => Color.FromArgb(59, 130, 246),
-            _ => Color.FromArgb(156, 163, 175)
-        };
+            bool isOn = _monitor.IsOnline(p.Host, p.Port);
+            if (isOn) online++;
+            compactParts.Add($"{p.Port} {(isOn ? "ON" : "OFF")}");
+        }
+
+        // NotifyIcon.Text is limited to 63 chars. Use compact per-proxy list if it fits,
+        // otherwise fall back to an aggregate summary.
+        var compact = $"ProxySwitch | {string.Join(" | ", compactParts)}";
+        _tray.Text = compact.Length <= 63
+            ? compact
+            : $"ProxySwitch | {online}/{total} proxies online";
+
+        Color color = total == 0
+            ? Color.FromArgb(156, 163, 175)
+            : online == total
+                ? Color.FromArgb(34, 197, 94)
+                : online > 0
+                    ? Color.FromArgb(59, 130, 246)
+                    : Color.FromArgb(156, 163, 175);
 
         _tray.Icon?.Dispose();
         _tray.Icon = CreateStatusIcon(color);

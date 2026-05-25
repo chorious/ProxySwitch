@@ -6,6 +6,13 @@ using ProxySwitch.Models;
 
 namespace ProxySwitch.Services;
 
+public sealed class EnsureRouteResult
+{
+    public bool Changed { get; init; }
+    public AppRoute Route { get; init; } = null!;
+    public string RouteKey { get; init; } = "";
+}
+
 /// <summary>
 /// Generates and applies ProxiFyre's `app-config.json` from ProxySwitch's
 /// internal AppRoute model. Does NOT install drivers or services. When
@@ -152,6 +159,8 @@ public class ProxiFyreBackend
                 var appName = _resolver.ResolveBackendAppName(route);
                 if (!string.IsNullOrEmpty(appName))
                     apps.Add(appName);
+                else
+                    _events.Add("RouteSkippedEmptyIdentity", $"{route.Name}: no resolvable exe or process name for matchKind={route.MatchKind}");
             }
             apps = apps.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (apps.Count == 0) continue;
@@ -250,9 +259,10 @@ public class ProxiFyreBackend
     /// so RemoveTmpRoutesForSession can clean it up later. Ignored when
     /// isPersistent is true.
     /// </summary>
-    public bool EnsureRoute(string exePath, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null)
+    public EnsureRouteResult EnsureRoute(string exePath, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null)
     {
-        if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(proxyId)) return false;
+        if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(proxyId))
+            return new EnsureRouteResult { Changed = false, Route = null!, RouteKey = "" };
 
         var procName = Path.GetFileName(exePath);
         var existing = _config.AppRoutes.FirstOrDefault(r =>
@@ -260,8 +270,10 @@ public class ProxiFyreBackend
             r.ProxyId == proxyId);
 
         bool changed = false;
+        AppRoute route;
         if (existing != null)
         {
+            route = existing;
             if (!existing.Enabled) { existing.Enabled = true; changed = true; }
             // Upgrading tmp → set is OK; downgrading set → tmp by re-dropping isn't.
             if (isPersistent && !existing.IsPersistent)
@@ -280,7 +292,7 @@ public class ProxiFyreBackend
         }
         else
         {
-            var route = new AppRoute
+            route = new AppRoute
             {
                 Id = $"{Path.GetFileNameWithoutExtension(exePath)}-{proxyId}-{Guid.NewGuid().ToString("N")[..6]}",
                 Name = $"{procName} via {proxyId}",
@@ -314,7 +326,102 @@ public class ProxiFyreBackend
             try { SaveSwitchConfig(); }
             catch (Exception ex) { Logger.Error($"SaveSwitchConfig after EnsureRoute failed: {ex.Message}"); }
         }
-        return changed;
+
+        var routeKey = _resolver.GetStableRouteKey(route);
+        return new EnsureRouteResult { Changed = changed, Route = route, RouteKey = routeKey };
+    }
+
+    public EnsureRouteResult EnsureRoute(LaunchTarget target, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null)
+    {
+        if (target.LaunchKind == "exe" && !string.IsNullOrEmpty(target.ExePath))
+        {
+            return EnsureRoute(target.ExePath, proxyId, source, isPersistent, sessionId);
+        }
+
+        // For non-exe routes, look up by a stable identity.
+        var lookupIdentity = target.LaunchKind switch
+        {
+            "app-user-model-id" => target.AppUserModelId,
+            "shortcut" => target.ShortcutPath,
+            _ => target.ExePath
+        };
+
+        var existing = _config.AppRoutes.FirstOrDefault(r =>
+            r.ProxyId == proxyId &&
+            r.LaunchKind == target.LaunchKind &&
+            (!string.IsNullOrEmpty(lookupIdentity) &&
+             (r.AppUserModelId == lookupIdentity || r.ShortcutPath == lookupIdentity || r.ExePath == lookupIdentity)));
+
+        bool changed = false;
+        AppRoute route;
+        if (existing != null)
+        {
+            route = existing;
+            if (!existing.Enabled) { existing.Enabled = true; changed = true; }
+            if (isPersistent && !existing.IsPersistent)
+            {
+                existing.IsPersistent = true;
+                existing.SessionId = null;
+                changed = true;
+            }
+            if (!isPersistent && existing.SessionId != sessionId)
+            {
+                existing.SessionId = sessionId;
+                changed = true;
+            }
+            if (changed) _events.Add("AppRouteUpdated", $"{existing.Name} -> {proxyId} updated");
+        }
+        else
+        {
+            route = new AppRoute
+            {
+                Id = $"{target.DisplayName}-{proxyId}-{Guid.NewGuid().ToString("N")[..6]}",
+                Name = string.IsNullOrEmpty(target.DisplayName) ? lookupIdentity : target.DisplayName,
+                ProxyId = proxyId,
+                Enabled = true,
+                IsPersistent = isPersistent,
+                Source = source,
+                SessionId = isPersistent ? null : sessionId,
+                LaunchKind = target.LaunchKind,
+                AppUserModelId = target.AppUserModelId,
+                PackageFamilyName = target.PackageFamilyName,
+                PackageRelativeExePath = target.PackageRelativeExePath,
+                ExePath = target.ExePath,
+                ProcessName = target.ProcessName,
+                ShortcutPath = target.ShortcutPath,
+                Arguments = target.Arguments,
+                WorkingDirectory = target.WorkingDirectory
+            };
+
+            if (target.LaunchKind == "app-user-model-id")
+            {
+                route.MatchKind = "app-user-model-id";
+                if (!string.IsNullOrEmpty(target.PackageFamilyName) && string.IsNullOrEmpty(target.PackageRelativeExePath))
+                {
+                    var discovered = AppIdentityResolver.TryDiscoverMsixExePath(target.PackageFamilyName);
+                    if (!string.IsNullOrEmpty(discovered))
+                        route.PackageRelativeExePath = discovered;
+                }
+            }
+            else if (!string.IsNullOrEmpty(target.PackageFamilyName))
+                route.MatchKind = "app-user-model-id";
+            else if (!string.IsNullOrEmpty(target.ProcessName))
+                route.MatchKind = "process-name";
+            else
+                route.MatchKind = "path";
+
+            _config.AppRoutes.Add(route);
+            _events.Add("AppRouteAdded", $"{route.Name} -> {proxyId} ({(isPersistent ? "persistent" : "session-only")}, source: {source}, matchKind: {route.MatchKind})");
+            changed = true;
+        }
+
+        if (changed && _config.AppRoutes.Any(r => r.IsPersistent))
+        {
+            try { SaveSwitchConfig(); }
+            catch (Exception ex) { Logger.Error($"SaveSwitchConfig after EnsureRoute failed: {ex.Message}"); }
+        }
+
+        return new EnsureRouteResult { Changed = changed, Route = route, RouteKey = _resolver.GetStableRouteKey(route) };
     }
 
     /// <summary>

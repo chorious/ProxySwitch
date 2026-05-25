@@ -238,6 +238,21 @@ public class AppRoute
 
     [JsonPropertyName("resolvedAt")]
     public DateTime? ResolvedAt { get; set; }
+
+    [JsonPropertyName("launchKind")]
+    public string LaunchKind { get; set; } = "exe";
+
+    [JsonPropertyName("appUserModelId")]
+    public string AppUserModelId { get; set; } = "";
+
+    [JsonPropertyName("shortcutPath")]
+    public string ShortcutPath { get; set; } = "";
+
+    [JsonPropertyName("arguments")]
+    public string Arguments { get; set; } = "";
+
+    [JsonPropertyName("workingDirectory")]
+    public string WorkingDirectory { get; set; } = "";
 }
 
 public class SessionSupervisorConfig

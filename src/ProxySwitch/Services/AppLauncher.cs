@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using ProxySwitch.Models;
 
 namespace ProxySwitch.Services;
@@ -76,6 +77,94 @@ public class AppLauncher
         catch (Exception ex)
         {
             Logger.Error($"Failed to launch {exePath}: {ex.Message}");
+            return new LaunchResult { Success = false, Error = ex.Message };
+        }
+    }
+
+    public LaunchResult LaunchTarget(LaunchTarget target)
+    {
+        switch (target.LaunchKind)
+        {
+            case "exe":
+                return LaunchGeneric(target.ExePath);
+
+            case "shortcut":
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = target.ShortcutPath,
+                        Arguments = target.Arguments,
+                        WorkingDirectory = string.IsNullOrEmpty(target.WorkingDirectory)
+                            ? (string.IsNullOrEmpty(target.ExePath) ? string.Empty : Path.GetDirectoryName(target.ExePath) ?? string.Empty)
+                            : target.WorkingDirectory,
+                        UseShellExecute = true
+                    };
+                    var proc = Process.Start(psi);
+                    Logger.Info($"Launched shortcut: {target.ShortcutPath}");
+                    return new LaunchResult { Success = true, ProcessId = proc?.Id };
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Failed to launch shortcut {target.ShortcutPath}: {ex.Message}");
+                    return new LaunchResult { Success = false, Error = ex.Message };
+                }
+
+            case "app-user-model-id":
+                return LaunchByAumid(target.AppUserModelId);
+
+            default:
+                return new LaunchResult { Success = false, Error = $"Unknown launch kind: {target.LaunchKind}" };
+        }
+    }
+
+    [ComImport]
+    [Guid("2e941141-7f97-4756-ba1d-9decde894a3d")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IApplicationActivationManager
+    {
+        int ActivateApplication(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            [MarshalAs(UnmanagedType.LPWStr)] string arguments,
+            ActivateOptions options,
+            out uint processId);
+    }
+
+    [Flags]
+    private enum ActivateOptions
+    {
+        None = 0,
+        DesignMode = 1,
+        NoErrorUI = 2,
+        NoSplashScreen = 4
+    }
+
+    private static LaunchResult LaunchByAumid(string aumid)
+    {
+        try
+        {
+            var type = Type.GetTypeFromCLSID(new Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C"));
+            if (type == null)
+                return new LaunchResult { Success = false, Error = "IApplicationActivationManager not available" };
+
+            var manager = (IApplicationActivationManager?)Activator.CreateInstance(type);
+            if (manager == null)
+                return new LaunchResult { Success = false, Error = "Failed to create activation manager" };
+
+            uint pid;
+            int hr = manager.ActivateApplication(aumid, "", ActivateOptions.None, out pid);
+            if (hr < 0)
+            {
+                var ex = Marshal.GetExceptionForHR(hr);
+                return new LaunchResult { Success = false, Error = ex?.Message ?? $"Activation failed (0x{hr:X8})" };
+            }
+
+            Logger.Info($"Launched Store app by AUMID: {aumid} (PID={pid})");
+            return new LaunchResult { Success = true, ProcessId = (int)pid };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Failed to launch Store app {aumid}: {ex.Message}");
             return new LaunchResult { Success = false, Error = ex.Message };
         }
     }

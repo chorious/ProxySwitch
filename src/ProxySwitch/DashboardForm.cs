@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using ProxySwitch.Controls;
+using ProxySwitch.Dialogs;
 using ProxySwitch.Models;
 using ProxySwitch.Services;
 
@@ -24,9 +25,9 @@ public class DashboardForm : Form
     private Label _backendStatusLabel = null!;
     private Button _restartBackendBtn = null!;
     private FlowLayoutPanel _pinnedPanel = null!;
+    private FlowLayoutPanel _zonePanel = null!;
+    private readonly Dictionary<string, LaunchZoneControl> _proxyZones = new();
     private LaunchZoneControl _directZone = null!;
-    private LaunchZoneControl _z10708 = null!;
-    private LaunchZoneControl _z10808 = null!;
     private StatusStrip _statusStrip = null!;
     private ToolStripStatusLabel _statusBackend = null!;
     private ToolStripStatusLabel _statusSystem = null!;
@@ -114,7 +115,7 @@ public class DashboardForm : Form
         SubscribeEvents();
 
         RebuildPinnedApps();
-        RebuildZoneLabels();
+        RebuildLaunchZones();
         UpdateProxyStatus();
         UpdateBackendStatus();
         UpdateRestartButton(_restartBackendBtn);
@@ -150,25 +151,81 @@ public class DashboardForm : Form
         _pinnedPanel.Controls.Add(addBtn);
     }
 
-    private static Color AccentForApp(Models.AppConfig app)
+    private Color AccentForApp(Models.AppConfig app) => AccentForProxyId(app.ProxyId);
+
+    private Color AccentForProxyId(string? proxyId)
     {
-        if (string.IsNullOrEmpty(app.ProxyId)) return UI.Theme.AccentDirect;
-        return app.ProxyId switch
+        if (string.IsNullOrEmpty(proxyId)) return UI.Theme.AccentDirect;
+        var idx = _config.Proxies.FindIndex(p => p.Id == proxyId);
+        if (idx < 0) return UI.Theme.AccentDirect;
+        var mod = idx % 3;
+        return mod switch
         {
-            "p10708" => UI.Theme.AccentClash,
-            "p10808" => UI.Theme.AccentV2ray,
+            0 => UI.Theme.AccentClash,
+            1 => UI.Theme.AccentV2ray,
             _ => UI.Theme.AccentDirect
         };
     }
 
+    private static UI.IconRenderer.IconKind ProxyIconForIndex(int index)
+    {
+        return (index % 3) switch
+        {
+            0 => UI.IconRenderer.IconKind.Clash,
+            1 => UI.IconRenderer.IconKind.V2ray,
+            _ => UI.IconRenderer.IconKind.Rocket
+        };
+    }
+
+    private void RebuildLaunchZones()
+    {
+        if (_zonePanel == null) return;
+        _zonePanel.Controls.Clear();
+        _proxyZones.Clear();
+
+        var directZone = new LaunchZoneControl
+        {
+            Title = "Direct",
+            Subtitle = "Drop app — no proxy",
+            Mode = "direct",
+            IconKind = UI.IconRenderer.IconKind.Direct,
+            AccentColor = UI.Theme.AccentDirect,
+            Width = 220,
+            Height = 92,
+            Margin = new Padding(4)
+        };
+        directZone.TargetDropped += target => HandleDrop(target, null);
+        _zonePanel.Controls.Add(directZone);
+        _directZone = directZone;
+
+        foreach (var proxy in _config.Proxies)
+        {
+            var label = LabelForProxy(proxy.Id, proxy.Port.ToString());
+            var zone = new LaunchZoneControl
+            {
+                Title = label,
+                Subtitle = "Drop app — route through ProxiFyre",
+                Mode = $"proxy-{proxy.Id}",
+                IconKind = ProxyIconForIndex(_proxyZones.Count),
+                AccentColor = AccentForProxyId(proxy.Id),
+                Width = 220,
+                Height = 92,
+                Margin = new Padding(4)
+            };
+            var capturedProxyId = proxy.Id;
+            zone.TargetDropped += target => HandleDrop(target, capturedProxyId);
+            _zonePanel.Controls.Add(zone);
+            _proxyZones[proxy.Id] = zone;
+        }
+    }
+
     private void RebuildZoneLabels()
     {
-        // LaunchZoneControl uses UserPaint + custom OnPaint over Title — Invalidate
-        // triggers the repaint with the new text.
-        _z10708.Title = LabelForProxy("p10708", "10708");
-        _z10708.Invalidate();
-        _z10808.Title = LabelForProxy("p10808", "10808");
-        _z10808.Invalidate();
+        foreach (var kv in _proxyZones)
+        {
+            kv.Value.Title = LabelForProxy(kv.Key, kv.Key);
+            kv.Value.Invalidate();
+        }
         _directZone.Invalidate();
     }
 
@@ -186,60 +243,19 @@ public class DashboardForm : Form
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 60f));
         mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 40f));
 
-        // Row 0: Launch Zones (named after the actual routing backend)
-        var zonePanel = new TableLayoutPanel
+        // Row 0: Launch Zones — dynamic FlowLayoutPanel so any number of proxies
+        // creates a lane without code changes. Width 220px per zone, wraps when narrow.
+        var zonePanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 3,
-            RowCount = 1
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            AutoScroll = true,
+            BackColor = UI.Theme.WindowBg
         };
-        for (int i = 0; i < 3; i++)
-            zonePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
-
-        var directZone = new LaunchZoneControl
-        {
-            Title = "Direct",
-            Subtitle = "Drop app — no proxy",
-            Mode = "direct",
-            IconKind = UI.IconRenderer.IconKind.Direct,
-            AccentColor = UI.Theme.AccentDirect,
-            Dock = DockStyle.Fill,
-            Margin = new Padding(4)
-        };
-        directZone.FileDropped += path => HandleDrop(path, "direct");
-        zonePanel.Controls.Add(directZone, 0, 0);
-        _directZone = directZone;
-
-        var z10708Label = LabelForProxy("p10708", "10708");
-        var z10708 = new LaunchZoneControl
-        {
-            Title = z10708Label,
-            Subtitle = "Drop app — route through ProxiFyre",
-            Mode = "proxy-10708",
-            IconKind = UI.IconRenderer.IconKind.Clash,
-            AccentColor = UI.Theme.AccentClash,
-            Dock = DockStyle.Fill,
-            Margin = new Padding(4)
-        };
-        z10708.FileDropped += path => HandleDrop(path, "proxy-10708");
-        zonePanel.Controls.Add(z10708, 1, 0);
-        _z10708 = z10708;
-
-        var z10808Label = LabelForProxy("p10808", "10808");
-        var z10808 = new LaunchZoneControl
-        {
-            Title = z10808Label,
-            Subtitle = "Drop app — route through ProxiFyre",
-            Mode = "proxy-10808",
-            IconKind = UI.IconRenderer.IconKind.V2ray,
-            AccentColor = UI.Theme.AccentV2ray,
-            Dock = DockStyle.Fill,
-            Margin = new Padding(4)
-        };
-        z10808.FileDropped += path => HandleDrop(path, "proxy-10808");
-        zonePanel.Controls.Add(z10808, 2, 0);
-        _z10808 = z10808;
+        _zonePanel = zonePanel;
         mainLayout.Controls.Add(zonePanel, 0, 0);
+        RebuildLaunchZones();
 
         // Row 1: Pinned Apps
         _pinnedPanel = new FlowLayoutPanel
@@ -411,6 +427,24 @@ public class DashboardForm : Form
         settingsBtn.Click += (_, _) => SettingsRequested?.Invoke();
         headerPanel.Controls.Add(settingsBtn);
         settingsBtn.Location = new Point(headerPanel.Width - 36, 4);
+
+        var addStoreBtn = new Button
+        {
+            Text = "+ Store App",
+            Font = UI.Theme.BodyFont,
+            AutoSize = true,
+            Height = 32,
+            FlatStyle = FlatStyle.Flat,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            BackColor = UI.Theme.WindowBg,
+            ForeColor = UI.Theme.TextSecondary,
+            Cursor = Cursors.Hand
+        };
+        addStoreBtn.FlatAppearance.BorderSize = 0;
+        addStoreBtn.Click += (_, _) => ShowStoreAppPicker();
+        headerPanel.Controls.Add(addStoreBtn);
+        addStoreBtn.Location = new Point(headerPanel.Width - 140, 4);
+
         Controls.Add(headerPanel);
 
         UpdateProxyStatus();
@@ -427,19 +461,17 @@ public class DashboardForm : Form
         return fallback;
     }
 
-    private async void HandleDrop(string exePath, string mode)
+    private async void HandleDrop(LaunchTarget target, string? proxyId)
     {
-        var name = Path.GetFileNameWithoutExtension(exePath);
-        var proxyId = mode switch
-        {
-            "proxy-10708" => "p10708",
-            "proxy-10808" => "p10808",
-            _ => null
-        };
+        var exePath = target.ExePath;
+        var name = string.IsNullOrEmpty(target.DisplayName)
+            ? Path.GetFileNameWithoutExtension(exePath)
+            : target.DisplayName;
+        var mode = proxyId == null ? "direct" : "proxy";
 
         bool isPersistent = false;
 
-        if (mode != "direct" && proxyId != null)
+        if (proxyId != null)
         {
             var label = LabelForProxy(proxyId, proxyId);
             // PR5a: typed three-way dialog replaces YesNoCancel MessageBox. Same
@@ -464,6 +496,31 @@ public class DashboardForm : Form
         catch (Exception ex)
         {
             Logger.Error($"HandleDrop background launch failed: {ex.Message}");
+        }
+    }
+
+    private async void ShowStoreAppPicker()
+    {
+        using var dlg = new StoreAppPickerDialog(_config);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (dlg.SelectedTarget == null || string.IsNullOrEmpty(dlg.SelectedProxyId)) return;
+
+        var target = dlg.SelectedTarget;
+        var proxyId = dlg.SelectedProxyId;
+        var label = LabelForProxy(proxyId, proxyId);
+        using var confirmDlg = new LaunchConfirmDialog(label);
+        confirmDlg.ShowDialog(this);
+        if (confirmDlg.Choice == LaunchChoice.Cancel) return;
+        bool isPersistent = confirmDlg.Choice == LaunchChoice.Persistent;
+
+        try
+        {
+            await Task.Run(() => _sessions.LaunchTarget(target, target.DisplayName, proxyId, isPersistent));
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Store app launch failed: {ex.Message}");
+            _events.Add("StoreAppLaunchFailed", $"{target.DisplayName}: {ex.Message}");
         }
     }
 
@@ -727,6 +784,20 @@ public class DashboardForm : Form
             UpdateSessionRow(i, sessions[i]);
     }
 
+    private static string SessionTooltip(Models.LaunchSession session)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(session.RouteKey))
+            parts.Add($"Route: {session.RouteKey}");
+        var roles = session.Processes
+            .Where(p => p.ExitedAt == null)
+            .Select(p => $"{p.Name} ({p.Role})")
+            .ToList();
+        if (roles.Count > 0)
+            parts.Add($"Processes: {string.Join(", ", roles)}");
+        return string.Join("\n", parts);
+    }
+
     private void AddSessionRow(Models.LaunchSession session)
     {
         var idx = _sessionGrid.Rows.Add(
@@ -735,7 +806,9 @@ public class DashboardForm : Form
             FormatRouting(session),
             ComputePidText(session),
             ComputeActionsText(session));
-        _sessionGrid.Rows[idx].Tag = session;
+        var row = _sessionGrid.Rows[idx];
+        row.Tag = session;
+        row.Cells["App"].ToolTipText = SessionTooltip(session);
     }
 
     private void UpdateSessionRow(int rowIdx, Models.LaunchSession session)
@@ -748,15 +821,28 @@ public class DashboardForm : Form
         row.Cells["Routing"].Value = FormatRouting(session);
         row.Cells["PID"].Value = ComputePidText(session);
         row.Cells["Actions"].Value = ComputeActionsText(session);
+        row.Cells["App"].ToolTipText = SessionTooltip(session);
         _sessionGrid.InvalidateRow(rowIdx);
     }
 
     private static string ComputePidText(Models.LaunchSession session)
     {
         var liveCount = session.LiveProcessCount;
-        if (liveCount > 1) return $"Procs: {liveCount}";
+        if (liveCount > 1)
+        {
+            var roles = session.Processes
+                .Where(p => p.ExitedAt == null)
+                .Select(p => p.Role)
+                .Distinct()
+                .ToList();
+            var roleHint = roles.Count == 1 ? $" ({roles[0]})" : "";
+            return $"Procs: {liveCount}{roleHint}";
+        }
         var pid = session.LiveProcessId ?? session.RootProcessId;
-        return pid.HasValue ? $"PID {pid.Value}" : "—";
+        if (!pid.HasValue) return "—";
+        var proc = session.Processes.FirstOrDefault(p => p.ProcessId == pid.Value);
+        var roleLabel = proc?.Role ?? "root";
+        return $"PID {pid.Value} ({roleLabel})";
     }
 
     /// <summary>

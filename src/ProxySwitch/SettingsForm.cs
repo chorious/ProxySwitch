@@ -27,9 +27,11 @@ public class SettingsForm : Form
     private readonly List<NavItem> _navItems = new();
     private readonly Dictionary<string, Panel> _contentPanels = new();
     private string _activeTab = "proxies";
+    private ProxiFyreBackend? _backend;
 
-    public SettingsForm()
+    public SettingsForm(ProxiFyreBackend? backend = null)
     {
+        _backend = backend;
         Text = "ProxySwitch Settings";
         Size = new Size(960, 600);
         StartPosition = FormStartPosition.CenterScreen;
@@ -387,28 +389,76 @@ public class SettingsForm : Form
     private void BuildAppRoutesPanel()
     {
         var p = new Panel { BackColor = UI.Theme.PanelBg };
+
+        var toolbar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            Height = 36,
+            Padding = new Padding(4),
+            BackColor = UI.Theme.PanelBg
+        };
+        var addStoreBtn = new Button
+        {
+            Text = "+ Add Store App",
+            AutoSize = true,
+            Height = 28
+        };
+        addStoreBtn.Click += (_, _) => ShowStoreAppPicker();
+        toolbar.Controls.Add(addStoreBtn);
+        p.Controls.Add(toolbar);
+
         _routeGrid = new DataGridView
         {
             Dock = DockStyle.Fill,
             AutoGenerateColumns = false,
-            AllowUserToAddRows = false,    // adds happen via drag-drop on Dashboard
+            AllowUserToAddRows = false,
             AllowUserToDeleteRows = true,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         };
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", FillWeight = 18, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "MatchKind", HeaderText = "Match Kind", Width = 90, MinimumWidth = 80 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ExePath", HeaderText = "Executable", FillWeight = 28, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 120 });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ResolvedExePath", HeaderText = "Resolved Path", FillWeight = 22, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100, ReadOnly = true });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", FillWeight = 14, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 80 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Name", FillWeight = 16, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "MatchKind", HeaderText = "Match Kind", Width = 80, MinimumWidth = 70 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "LaunchKind", HeaderText = "Launch Kind", Width = 80, MinimumWidth = 70 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "AppUserModelId", HeaderText = "AUMID", FillWeight = 18, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PackageFamilyName", HeaderText = "Package Family", FillWeight = 14, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 90 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PackageRelativeExePath", HeaderText = "Relative Exe", FillWeight = 14, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 80 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ExePath", HeaderText = "Executable", FillWeight = 20, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 120 });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ResolvedExePath", HeaderText = "Resolved Path", FillWeight = 18, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 100, ReadOnly = true });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProcessName", HeaderText = "Process", FillWeight = 12, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 80 });
         _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProxyId", HeaderText = "Proxy", Width = 70, MinimumWidth = 60 });
-        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", HeaderText = "Enabled", Width = 60, MinimumWidth = 55 });
-        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 60, MinimumWidth = 55, ReadOnly = true });
-        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", FillWeight = 12, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 80, ReadOnly = true });
+        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", HeaderText = "Enabled", Width = 55, MinimumWidth = 50 });
+        _routeGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsPersistent", HeaderText = "Saved", Width = 55, MinimumWidth = 50, ReadOnly = true });
+        _routeGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Source", HeaderText = "Source", FillWeight = 10, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, MinimumWidth = 80, ReadOnly = true });
         ApplyGridTheme(_routeGrid);
 
         p.Controls.Add(_routeGrid);
         p.Controls.Add(BuildContentTitle("App Routes", "Per-app routing rules driving ProxiFyre. Add new routes by dropping apps on the Dashboard."));
         _contentPanels["app-routes"] = p;
+    }
+
+    private void ShowStoreAppPicker()
+    {
+        using var dlg = new Dialogs.StoreAppPickerDialog(_config);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        if (dlg.SelectedTarget == null || string.IsNullOrEmpty(dlg.SelectedProxyId)) return;
+
+        var target = dlg.SelectedTarget;
+        var proxyId = dlg.SelectedProxyId;
+
+        // Write route directly (no launch — Settings is for managing routes).
+        try
+        {
+            var result = _backend?.EnsureRoute(target, proxyId, source: "store-app-set", isPersistent: true);
+            if (result?.Changed == true)
+            {
+                _backend?.WriteConfig();
+            }
+            _routeGrid.DataSource = new BindingSource { DataSource = _config.AppRoutes };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Settings StoreApp add failed: {ex.Message}");
+        }
     }
 
     private void BuildTransparentBackendPanel()

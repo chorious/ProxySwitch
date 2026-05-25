@@ -42,6 +42,12 @@ public sealed class LaunchSession
 
     public string? LastError { get; set; }
 
+    /// <summary>
+    /// Stable route identity set at session creation. Used for merge/attach
+    /// decisions instead of repeatedly guessing from process state.
+    /// </summary>
+    public string RouteKey { get; set; } = "";
+
     public int? LiveProcessId
     {
         get

@@ -19,6 +19,55 @@ public class AppIdentityResolver
     }
 
     /// <summary>
+    /// Given a PackageFamilyName, query its install location via PowerShell and
+    /// return the relative path of the first .exe found under it. Returns null
+    /// if the package is not found or contains no executables.
+    /// </summary>
+    public static string? TryDiscoverMsixExePath(string packageFamilyName)
+    {
+        if (string.IsNullOrEmpty(packageFamilyName)) return null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -Command \"& {{ Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq '{EscapePsSingleQuote(packageFamilyName)}' }} | Select-Object -Property InstallLocation | ConvertTo-Json -Compress }}\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) return null;
+            var readTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
+            var exited = proc.WaitForExit(5000);
+            if (!exited) { try { proc.Kill(); } catch { } return null; }
+            if (!readTask.Wait(TimeSpan.FromSeconds(2))) return null;
+            var json = readTask.Result;
+            if (proc.ExitCode != 0) return null;
+
+            using var doc = JsonDocument.Parse(json);
+            string? installLocation = null;
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                var first = doc.RootElement.EnumerateArray().FirstOrDefault();
+                if (first.ValueKind == JsonValueKind.Object)
+                    installLocation = first.GetProperty("InstallLocation").GetString();
+            }
+            else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                installLocation = doc.RootElement.GetProperty("InstallLocation").GetString();
+            }
+
+            if (string.IsNullOrEmpty(installLocation) || !Directory.Exists(installLocation)) return null;
+            var exeFiles = Directory.GetFiles(installLocation, "*.exe", SearchOption.AllDirectories);
+            if (exeFiles.Length == 0) return null;
+            var firstExe = exeFiles[0];
+            return firstExe.Substring(installLocation.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Escape a value so it is safe inside a PowerShell single-quoted string.
     /// In PowerShell, single quotes inside single-quoted strings are escaped by
     /// doubling them (' → '').
@@ -165,6 +214,19 @@ public class AppIdentityResolver
                 }
                 return NormalizeProcessName(route.ProcessName);
 
+            case "app-user-model-id":
+                if (!string.IsNullOrEmpty(route.PackageFamilyName) && !string.IsNullOrEmpty(route.PackageRelativeExePath))
+                {
+                    var aumidResolved = ResolveMsixPath(route.PackageFamilyName, route.PackageRelativeExePath);
+                    if (!string.IsNullOrEmpty(aumidResolved))
+                    {
+                        route.ResolvedExePath = aumidResolved;
+                        route.ResolvedAt = DateTime.Now;
+                        return aumidResolved;
+                    }
+                }
+                return NormalizeProcessName(route.ProcessName);
+
             case "process-name":
                 return NormalizeProcessName(route.ProcessName);
 
@@ -187,6 +249,7 @@ public class AppIdentityResolver
         var identity = kind switch
         {
             "msix-package" => $"{route.PackageFamilyName}/{route.PackageRelativeExePath}",
+            "app-user-model-id" => route.AppUserModelId,
             "process-name" => NormalizeProcessName(route.ProcessName),
             _ => route.ExePath
         };
