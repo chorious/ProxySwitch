@@ -1114,6 +1114,7 @@ public class DashboardForm : Form
         "proxifyre-route-active" => "ProxiFyre active",
         "proxifyre-route-pending" => "ProxiFyre pending",
         "proxifyre-route-needs-restart" => "Restart needed",
+        "proxifyre-route-needs-process-confirmation" => "Confirm process",
         "proxifyre-route-failed" => "ProxiFyre failed",
         _ => session.RoutingStatus
     };

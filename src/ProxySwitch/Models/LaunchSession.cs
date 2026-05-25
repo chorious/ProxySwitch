@@ -48,6 +48,24 @@ public sealed class LaunchSession
     /// </summary>
     public string RouteKey { get; set; } = "";
 
+    /// <summary>
+    /// The launch kind that created this session (exe, app-user-model-id, shortcut).
+    /// Used to decide whether process confirmation heuristics apply.
+    /// </summary>
+    public string LaunchKind { get; set; } = "exe";
+
+    /// <summary>
+    /// For Store-app sessions: the AUMID used to launch. Empty for normal executables.
+    /// </summary>
+    public string AppUserModelId { get; set; } = "";
+
+    /// <summary>
+    /// True when the route's backend app name could not be resolved before launch.
+    /// We must observe the real process and write its identity back into AppRoute
+    /// before ProxiFyre can route it.
+    /// </summary>
+    public bool NeedsProcessConfirmation { get; set; }
+
     public int? LiveProcessId
     {
         get

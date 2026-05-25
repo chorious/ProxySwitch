@@ -425,6 +425,17 @@ public class ProxiFyreBackend
     }
 
     /// <summary>
+    /// Check whether a route can produce a non-empty backend app name for ProxiFyre.
+    /// Used to decide if a Store App launch can go straight to active or needs
+    /// process confirmation first.
+    /// </summary>
+    public bool HasResolvableBackendAppName(AppRoute route)
+    {
+        var name = _resolver.ResolveBackendAppName(route);
+        return !string.IsNullOrEmpty(name);
+    }
+
+    /// <summary>
     /// Remove a single route by exePath + proxyId (used for launch-failure rollback).
     /// Returns true if a route was actually removed.
     /// </summary>

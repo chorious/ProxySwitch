@@ -1,3 +1,4 @@
+using System.Management;
 using ProxySwitch.Models;
 
 namespace ProxySwitch.Services;
@@ -387,7 +388,10 @@ public sealed class SessionManager : IDisposable
             Status = "running",
             RoutingStatus = routingStatus,
             IsPersistentLaunch = isPersistentRoute,
-            RouteKey = routeKey
+            RouteKey = routeKey,
+            LaunchKind = target.LaunchKind,
+            AppUserModelId = target.AppUserModelId,
+            NeedsProcessConfirmation = routingStatus == "proxifyre-route-needs-process-confirmation"
         };
 
         if (result.ProcessId.HasValue)
@@ -403,6 +407,15 @@ public sealed class SessionManager : IDisposable
         }
 
         AddSession(session);
+
+        // If the AUMID activation returned a PID and we need confirmation,
+        // query it immediately. Some Store Apps return the real app PID directly.
+        if (session.NeedsProcessConfirmation && result.ProcessId.HasValue)
+        {
+            var hit = QueryProcessHit(result.ProcessId.Value);
+            if (hit != null && IsSafeToConfirm(hit, session))
+                TryConfirmRouteFromProcess(session, hit);
+        }
 
         if (session.RoutingStatus == "proxifyre-route-launching")
         {
@@ -445,6 +458,13 @@ public sealed class SessionManager : IDisposable
             var source = isPersistentRoute ? "store-app-set" : "store-app-tmp";
             var result = _backend.EnsureRoute(target, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId);
             _backend.WriteConfig();
+
+            if (result.Route.MatchKind == "app-user-model-id" && !_backend.HasResolvableBackendAppName(result.Route))
+            {
+                _events.Add("StoreAppNeedsProcessConfirmation", $"{target.DisplayName}: AUMID route created but process identity unknown; waiting for process observation");
+                return ("proxifyre-route-needs-process-confirmation", result.RouteKey);
+            }
+
             return ("proxifyre-route-launching", result.RouteKey);
         }
         catch (Exception ex)
@@ -453,6 +473,152 @@ public sealed class SessionManager : IDisposable
             _events.Add("BackendApplyFailed", ex.Message);
             return ("proxifyre-route-failed", "");
         }
+    }
+
+    /// <summary>
+    /// For Store App sessions whose backend app name could not be resolved before
+    /// launch, observe a merged process and write its identity back into the
+    /// matching AppRoute. Then save config, rewrite ProxiFyre config, and start
+    /// the apply/restart flow. Returns true if the route was updated.
+    /// </summary>
+    private bool TryConfirmRouteFromProcess(LaunchSession session, ExternalProcessHit hit)
+    {
+        if (!session.NeedsProcessConfirmation) return false;
+
+        // Find the matching AppRoute by route key or by proxyId + AUMID.
+        var route = _config.AppRoutes.FirstOrDefault(r =>
+            r.ProxyId == session.ProxyId &&
+            r.MatchKind == "app-user-model-id" &&
+            (!string.IsNullOrEmpty(session.RouteKey)
+                ? _resolver.GetStableRouteKey(r) == session.RouteKey
+                : r.AppUserModelId == session.AppUserModelId));
+
+        if (route == null) return false;
+
+        bool changed = false;
+
+        if (!string.IsNullOrEmpty(hit.Name) && string.IsNullOrEmpty(route.ProcessName))
+        {
+            route.ProcessName = hit.Name;
+            changed = true;
+        }
+        else if (!string.IsNullOrEmpty(hit.Name) && !string.IsNullOrEmpty(route.ProcessName)
+                 && !string.Equals(route.ProcessName, hit.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            _events.Add("StoreAppProcessMismatch",
+                $"{session.Name}: observed process {hit.Name} does not match existing {route.ProcessName}");
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(hit.ExecutablePath) && string.IsNullOrEmpty(route.ResolvedExePath))
+        {
+            route.ResolvedExePath = hit.ExecutablePath;
+            route.ResolvedAt = DateTime.Now;
+            changed = true;
+        }
+
+        if (!changed) return false;
+
+        _events.Add("StoreAppProcessConfirmed",
+            $"{session.Name}: confirmed process {hit.Name} (exe={hit.ExecutablePath}) for AUMID route");
+
+        session.NeedsProcessConfirmation = false;
+        session.RoutingStatus = "proxifyre-route-launching";
+        SessionsChanged?.Invoke();
+
+        try
+        {
+            _backend?.SaveSwitchConfig();
+            _backend?.WriteConfig();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"TryConfirmRouteFromProcess config write failed: {ex.Message}");
+            session.RoutingStatus = "proxifyre-route-failed";
+            SessionsChanged?.Invoke();
+            return false;
+        }
+
+        CancellationTokenSource? cts;
+        lock (_sessionCts) _sessionCts.TryGetValue(session.Id, out cts);
+        var token = cts?.Token ?? CancellationToken.None;
+        _ = Task.Run(() => ApplyRoutingInBackgroundAsync(session, token));
+
+        return true;
+    }
+
+    /// <summary>
+    /// Query WMI for a single PID and convert the result into an ExternalProcessHit.
+    /// Returns null if the process no longer exists or WMI fails.
+    /// </summary>
+    private static ExternalProcessHit? QueryProcessHit(int pid)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate FROM Win32_Process WHERE ProcessId = {pid}");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                return new ExternalProcessHit
+                {
+                    ProcessId = Convert.ToInt32(obj["ProcessId"]),
+                    ParentProcessId = obj["ParentProcessId"] != null ? Convert.ToInt32(obj["ParentProcessId"]) : null,
+                    Name = obj["Name"]?.ToString() ?? "",
+                    ExecutablePath = obj["ExecutablePath"]?.ToString() ?? ""
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"QueryProcessHit({pid}) failed: {ex.Message}");
+        }
+        return null;
+    }
+
+    private static readonly HashSet<string> _knownBrokerNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ApplicationFrameHost.exe",
+        "explorer.exe",
+        "RuntimeBroker.exe",
+        "ShellExperienceHost.exe"
+    };
+
+    private static bool IsLikelyBrokerProcess(ExternalProcessHit hit)
+    {
+        if (string.IsNullOrEmpty(hit.Name)) return true;
+
+        var currentProc = System.Diagnostics.Process.GetCurrentProcess();
+        if (string.Equals(hit.Name, currentProc.ProcessName + ".exe", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (_knownBrokerNames.Contains(hit.Name)) return true;
+
+        // Prefer processes under WindowsApps
+        if (!string.IsNullOrEmpty(hit.ExecutablePath)
+            && hit.ExecutablePath.StartsWith(@"C:\Program Files\WindowsApps\", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Reject if no exe path at all
+        if (string.IsNullOrEmpty(hit.ExecutablePath)) return true;
+
+        return false;
+    }
+
+    private bool IsSafeToConfirm(ExternalProcessHit hit, LaunchSession session)
+    {
+        if (string.IsNullOrEmpty(hit.Name))
+        {
+            _events.Add("StoreAppProcessCandidateSkipped", $"{session.Name}: empty process name, skipping");
+            return false;
+        }
+
+        if (IsLikelyBrokerProcess(hit))
+        {
+            _events.Add("StoreAppProcessCandidateSkipped", $"{session.Name}: {hit.Name} looks like a broker, skipping");
+            return false;
+        }
+
+        return true;
     }
 
     private async Task MonitorDescendantsAsync(LaunchSession session, CancellationToken ct)
@@ -917,9 +1083,18 @@ public sealed class SessionManager : IDisposable
             RestartMonitorIfNeeded(matchedSession);
         SessionsChanged?.Invoke();
 
+        // Phase 2.5: Store App process confirmation. If this session was launched
+        // via AUMID and we haven't confirmed the real process yet, try to capture
+        // it from the merged process. If confirmation succeeds it already writes
+        // config and starts apply/restart, so skip Phase 3 child-route work.
+        bool confirmed = false;
+        if (matchedSession.NeedsProcessConfirmation && IsSafeToConfirm(hit, matchedSession))
+            confirmed = TryConfirmRouteFromProcess(matchedSession, hit);
+
         // Phase 3: backend work (EnsureRoute + WriteConfig + ApplyRouting) completely
         // outside the lock so we don't block session reads or UI refresh.
-        if (!string.IsNullOrEmpty(hit.ExecutablePath) &&
+        if (!confirmed &&
+            !string.IsNullOrEmpty(hit.ExecutablePath) &&
             _backend != null &&
             shouldEnsureChildRoute)
         {
@@ -1483,6 +1658,19 @@ public sealed class SessionManager : IDisposable
                             }
                             _events.Add("ChildProcessDetected", $"{sessionName}: child {desc.Name} (PID={desc.ProcessId})");
                             SessionsChanged?.Invoke();
+
+                            if (session.NeedsProcessConfirmation)
+                            {
+                                var hit = new ExternalProcessHit
+                                {
+                                    ProcessId = desc.ProcessId,
+                                    ParentProcessId = desc.ParentProcessId,
+                                    Name = desc.Name,
+                                    ExecutablePath = desc.ExecutablePath ?? ""
+                                };
+                                if (IsSafeToConfirm(hit, session))
+                                    TryConfirmRouteFromProcess(session, hit);
+                            }
                         });
                 }
                 catch (Exception ex)

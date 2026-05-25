@@ -104,6 +104,7 @@ internal static class Theme
         "proxifyre-route-restarting" => StatusPendingAmber,
         "proxifyre-route-pending" => StatusPendingAmber,
         "proxifyre-route-needs-restart" => StatusPendingAmber,
+        "proxifyre-route-needs-process-confirmation" => StatusPendingAmber,
         "proxifyre-route-failed" => StatusFailedRed,
         "external-routing-required" => StatusPendingAmber,
         _ => TextSecondary
