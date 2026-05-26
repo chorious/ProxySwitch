@@ -1,6 +1,7 @@
 namespace ProxySwitch;
 
 using ProxySwitch.Services;
+using System.Reflection;
 
 static class Program
 {
@@ -8,7 +9,10 @@ static class Program
     static void Main()
     {
         ApplicationConfiguration.Initialize();
-        Logger.Info("=== ProxySwitch starting ===");
+        var infoVersion = typeof(Program).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion ?? "unknown";
+        Logger.Info($"=== ProxySwitch starting (version: {infoVersion}) ===");
 
         AppDomain.CurrentDomain.UnhandledException += (s, e) =>
         {

@@ -128,7 +128,7 @@
       "packageFamilyName": "Claude_pzs8sxrjxfjjc",
       "packageRelativeExePath": "app\\Claude.exe",
       "resolvedExePath": "C:\\Program Files\\WindowsApps\\Claude_1.8089.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe",
-      "resolvedAt": "2026-05-26T09:37:24.2947188+08:00",
+      "resolvedAt": "2026-05-26T20:43:32.0070851+08:00",
       "launchKind": "exe",
       "appUserModelId": "",
       "shortcutPath": "",
@@ -153,7 +153,7 @@
       "shortcutPath": "",
       "arguments": "",
       "workingDirectory": ""
-    }
+    },
   ],
   "sessionSupervisor": {
     "enabled": true,
