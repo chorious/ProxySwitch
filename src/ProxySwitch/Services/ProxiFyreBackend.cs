@@ -27,6 +27,17 @@ public class ProxiFyreBackend
     private readonly AppIdentityResolver _resolver;
 
     /// <summary>
+    /// IPC client for runtime PID-based route management (named pipe to ProxiFyre service).
+    /// Null until explicitly assigned by the composition root.
+    /// </summary>
+    public ProxiFyreIpcClient? IpcClient { get; set; }
+
+    /// <summary>
+    /// True when the ProxiFyre IPC pipe is reachable.
+    /// </summary>
+    public bool IsIpcAvailable => IpcClient?.IsAvailable() ?? false;
+
+    /// <summary>
     /// True when ProxySwitch has removed routes from app-config.json without
     /// restarting the ProxiFyre service. The on-disk file is clean, but the
     /// live WFP/ProxiFyre service may still be matching the old rules until
@@ -147,7 +158,7 @@ public class ProxiFyreBackend
         var endpointByProxyId = _config.Proxies.ToDictionary(p => p.Id, p => $"{p.Host}:{p.Port}");
 
         var grouped = _config.AppRoutes
-            .Where(r => r.Enabled && endpointByProxyId.ContainsKey(r.ProxyId))
+            .Where(r => r.Enabled && !r.IpcManaged && endpointByProxyId.ContainsKey(r.ProxyId))
             .GroupBy(r => r.ProxyId);
 
         var rules = new List<ProxiFyreRule>();

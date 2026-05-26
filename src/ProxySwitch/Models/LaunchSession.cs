@@ -60,6 +60,12 @@ public sealed class LaunchSession
     public string AppUserModelId { get; set; } = "";
 
     /// <summary>
+    /// True when the route is managed via IPC (named pipe) to ProxiFyre instead
+    /// of being written to app-config.json. Store App sessions use this path.
+    /// </summary>
+    public bool IpcManaged { get; set; }
+
+    /// <summary>
     /// True when the route's backend app name could not be resolved before launch.
     /// We must observe the real process and write its identity back into AppRoute
     /// before ProxiFyre can route it.

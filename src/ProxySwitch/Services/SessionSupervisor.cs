@@ -91,13 +91,25 @@ public class SessionSupervisor : IDisposable
                 ProcessId = pid,
                 ParentProcessId = ppid,
                 Name = name,
-                ExecutablePath = path
+                ExecutablePath = path,
+                CreatedAt = ParseWmiDate(inst["CreationDate"]?.ToString()),
+                SessionId = inst["SessionId"] != null ? Convert.ToInt32(inst["SessionId"]) : null
             });
         }
         catch (Exception ex)
         {
             Logger.Error($"SessionSupervisor.OnEventArrived: {ex.Message}");
         }
+    }
+
+    private static DateTime? ParseWmiDate(string? wmiDate)
+    {
+        if (string.IsNullOrEmpty(wmiDate) || wmiDate.Length < 14) return null;
+        if (DateTime.TryParseExact(wmiDate[..14], "yyyyMMddHHmmss",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var dt))
+            return dt;
+        return null;
     }
 
     public void Dispose() => StopWatcher();

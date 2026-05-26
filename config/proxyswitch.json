@@ -13,6 +13,13 @@
       "type": "socks5",
       "host": "127.0.0.1",
       "port": 10808
+    },
+    {
+      "id": "p10608",
+      "name": "v2ray 10608",
+      "type": "socks5",
+      "host": "127.0.0.1",
+      "port": 10608
     }
   ],
   "apps": [
@@ -32,12 +39,12 @@
       "userDataDir": "E:\\proxyswitch\\profiles\\chrome-10708"
     },
     {
-      "id": "chrome-10808",
-      "name": "Chrome via v2ray 10808",
+      "id": "chrome-10608",
+      "name": "Chrome via v2ray 10608",
       "exe": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       "mode": "browser-proxy",
-      "proxyId": "p10808",
-      "userDataDir": "E:\\proxyswitch\\profiles\\chrome-10808"
+      "proxyId": "p10608",
+      "userDataDir": "E:\\proxyswitch\\profiles\\chrome-10608"
     },
     {
       "id": "edge-direct",
@@ -110,13 +117,46 @@
   "appRoutes": [
     {
       "id": "Obsidian-p10708-a4bfb2",
-      "name": "Obsidian.exe via p10708",
-      "exePath": "D:\\Program Files\\Obsidian\\Obsidian.exe",
-      "processName": "Obsidian.exe",
+      "name": "claude.exe via p10708",
+      "exePath": "C:\\Program Files\\WindowsApps\\Claude_1.8089.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe",
+      "processName": "Claude",
       "proxyId": "p10708",
       "enabled": true,
       "isPersistent": true,
-      "source": "drop-zone-set"
+      "source": "drop-zone-set",
+      "matchKind": "msix-package",
+      "packageFamilyName": "Claude_pzs8sxrjxfjjc",
+      "packageRelativeExePath": "app\\Claude.exe",
+      "resolvedExePath": "C:\\Program Files\\WindowsApps\\Claude_1.8089.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe",
+      "resolvedAt": "2026-05-26T09:37:24.2947188+08:00",
+      "launchKind": "exe",
+      "appUserModelId": "",
+      "shortcutPath": "",
+      "arguments": "",
+      "workingDirectory": ""
+    },
+    {
+      "id": "ModFinder-p10708-c5f5c5",
+      "name": "ModFinder.exe via p10708",
+      "exePath": "E:\\GameMod\\modfinder\\ModFinder.exe",
+      "processName": "ModFinder.exe",
+      "proxyId": "p10708",
+      "enabled": true,
+      "isPersistent": true,
+      "source": "drop-zone-set",
+      "matchKind": "path",
+      "packageFamilyName": "",
+      "packageRelativeExePath": "",
+      "resolvedExePath": "",
+      "launchKind": "exe",
+      "appUserModelId": "",
+      "shortcutPath": "",
+      "arguments": "",
+      "workingDirectory": ""
     }
-  ]
+  ],
+  "sessionSupervisor": {
+    "enabled": true,
+    "restartGraceSeconds": 20
+  }
 }

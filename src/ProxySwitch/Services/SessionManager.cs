@@ -375,6 +375,8 @@ public sealed class SessionManager : IDisposable
             ? (ProcessMonitor.GetProcessStartTime(result.ProcessId.Value) ?? DateTime.Now)
             : DateTime.Now;
 
+        var isIpcManaged = target.LaunchKind == "app-user-model-id" && _backend?.IsIpcAvailable == true;
+
         var session = new LaunchSession
         {
             Id = sessionId,
@@ -387,11 +389,12 @@ public sealed class SessionManager : IDisposable
             RootCreatedAt = rootCreatedAt,
             Status = "running",
             RoutingStatus = routingStatus,
-            IsPersistentLaunch = isPersistentRoute,
+            IsPersistentLaunch = isIpcManaged ? false : isPersistentRoute,
             RouteKey = routeKey,
             LaunchKind = target.LaunchKind,
             AppUserModelId = target.AppUserModelId,
-            NeedsProcessConfirmation = routingStatus == "proxifyre-route-needs-process-confirmation"
+            NeedsProcessConfirmation = routingStatus == "proxifyre-route-needs-process-confirmation",
+            IpcManaged = isIpcManaged
         };
 
         if (result.ProcessId.HasValue)
@@ -408,16 +411,70 @@ public sealed class SessionManager : IDisposable
 
         AddSession(session);
 
+        // IPC path: create session unconditionally; add PID only if available.
+        if (session.IpcManaged && _backend?.IpcClient != null)
+        {
+            var proxy = _config.Proxies.FirstOrDefault(p => p.Id == proxyId);
+            var endpoint = proxy != null ? $"{proxy.Host}:{proxy.Port}" : "";
+            var ipcRootPid = result.ProcessId;
+            var ipcRootCreated = rootCreatedAt;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var createResult = await _backend.IpcClient.CreateSessionAsync(session.Id, endpoint);
+                    if (!createResult.Success)
+                    {
+                        Logger.Error($"IPC CreateSession failed: {createResult.Error}");
+                        _events.Add("IpcCreateSessionFailed", $"{name}: {createResult.Error}");
+                        session.RoutingStatus = "proxifyre-route-failed";
+                        SessionsChanged?.Invoke();
+                        return;
+                    }
+
+                    _events.Add("IpcCreateSessionOk", $"{name}: IPC session created for {endpoint}");
+
+                    if (ipcRootPid.HasValue)
+                    {
+                        var addResult = await _backend.IpcClient.AddPidAsync(session.Id, ipcRootPid.Value, ipcRootCreated);
+                        if (!addResult.Success)
+                        {
+                            Logger.Error($"IPC AddPid failed: {addResult.Error}");
+                            _events.Add("IpcAddPidFailed", $"{name}: {addResult.Error}");
+                            session.RoutingStatus = "proxifyre-route-failed";
+                            SessionsChanged?.Invoke();
+                            return;
+                        }
+
+                        session.RoutingStatus = "proxifyre-route-active";
+                        _events.Add("IpcAddPidOk", $"{name}: PID {ipcRootPid.Value} routed via IPC to {endpoint}");
+                        SessionsChanged?.Invoke();
+                        try { RouteActivated?.Invoke(session); }
+                        catch (Exception ex) { Logger.Error($"RouteActivated handler: {ex.Message}"); }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"IPC routing for {name} failed: {ex.Message}");
+                    _events.Add("IpcRoutingFailed", $"{name}: {ex.Message}");
+                    session.RoutingStatus = "proxifyre-route-failed";
+                    SessionsChanged?.Invoke();
+                }
+            });
+        }
+
         // If the AUMID activation returned a PID and we need confirmation,
         // query it immediately. Some Store Apps return the real app PID directly.
+        bool confirmedFromRootPid = false;
         if (session.NeedsProcessConfirmation && result.ProcessId.HasValue)
         {
             var hit = QueryProcessHit(result.ProcessId.Value);
             if (hit != null && IsSafeToConfirm(hit, session))
-                TryConfirmRouteFromProcess(session, hit);
+                confirmedFromRootPid = TryConfirmRouteFromProcess(session, hit);
         }
 
-        if (session.RoutingStatus == "proxifyre-route-launching")
+        if (!confirmedFromRootPid && session.RoutingStatus == "proxifyre-route-launching")
         {
             CancellationTokenSource? cts;
             lock (_sessionCts) _sessionCts.TryGetValue(session.Id, out cts);
@@ -453,18 +510,24 @@ public sealed class SessionManager : IDisposable
                 return ("external-routing-required", "");
         }
 
+        // AUMID / Store App path: use IPC when available, fail hard otherwise.
+        // Never fall back to legacy child-route config-file behaviour for Store Apps.
+        if (target.LaunchKind == "app-user-model-id")
+        {
+            if (_backend.IsIpcAvailable)
+                return ("proxifyre-route-session-created", "");
+
+            _events.Add("IpcUnavailable",
+                $"{target.DisplayName}: ProxiFyre IPC unavailable for Store App routing. Please upgrade/restart ProxiFyre.");
+            return ("proxifyre-route-failed", "");
+        }
+
+        // Generic exe path: legacy config-file + restart
         try
         {
-            var source = isPersistentRoute ? "store-app-set" : "store-app-tmp";
-            var result = _backend.EnsureRoute(target, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId);
+            var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
+            var result = _backend.EnsureRoute(target.ExePath ?? "", proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId);
             _backend.WriteConfig();
-
-            if (result.Route.MatchKind == "app-user-model-id" && !_backend.HasResolvableBackendAppName(result.Route))
-            {
-                _events.Add("StoreAppNeedsProcessConfirmation", $"{target.DisplayName}: AUMID route created but process identity unknown; waiting for process observation");
-                return ("proxifyre-route-needs-process-confirmation", result.RouteKey);
-            }
-
             return ("proxifyre-route-launching", result.RouteKey);
         }
         catch (Exception ex)
@@ -483,6 +546,7 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     private bool TryConfirmRouteFromProcess(LaunchSession session, ExternalProcessHit hit)
     {
+        if (session.IpcManaged) return false;
         if (!session.NeedsProcessConfirmation) return false;
 
         // Find the matching AppRoute by route key or by proxyId + AUMID.
@@ -556,7 +620,7 @@ public sealed class SessionManager : IDisposable
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                $"SELECT ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate FROM Win32_Process WHERE ProcessId = {pid}");
+                $"SELECT ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate, SessionId FROM Win32_Process WHERE ProcessId = {pid}");
             foreach (ManagementObject obj in searcher.Get())
             {
                 return new ExternalProcessHit
@@ -564,7 +628,9 @@ public sealed class SessionManager : IDisposable
                     ProcessId = Convert.ToInt32(obj["ProcessId"]),
                     ParentProcessId = obj["ParentProcessId"] != null ? Convert.ToInt32(obj["ParentProcessId"]) : null,
                     Name = obj["Name"]?.ToString() ?? "",
-                    ExecutablePath = obj["ExecutablePath"]?.ToString() ?? ""
+                    ExecutablePath = obj["ExecutablePath"]?.ToString() ?? "",
+                    CreatedAt = ParseWmiDate(obj["CreationDate"]?.ToString()),
+                    SessionId = obj["SessionId"] != null ? Convert.ToInt32(obj["SessionId"]) : null
                 };
             }
         }
@@ -572,6 +638,16 @@ public sealed class SessionManager : IDisposable
         {
             Logger.Error($"QueryProcessHit({pid}) failed: {ex.Message}");
         }
+        return null;
+    }
+
+    private static DateTime? ParseWmiDate(string? wmiDate)
+    {
+        if (string.IsNullOrEmpty(wmiDate) || wmiDate.Length < 14) return null;
+        if (DateTime.TryParseExact(wmiDate[..14], "yyyyMMddHHmmss",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var dt))
+            return dt;
         return null;
     }
 
@@ -619,6 +695,23 @@ public sealed class SessionManager : IDisposable
         }
 
         return true;
+    }
+
+    private bool IsPendingStoreAppConfirmationCandidate(ExternalProcessHit hit, LaunchSession session, DateTime? processStartTime)
+    {
+        if (!session.NeedsProcessConfirmation) return false;
+        if (!string.Equals(session.LaunchKind, "app-user-model-id", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!IsSafeToConfirm(hit, session)) return false;
+
+        var createdAt = hit.CreatedAt ?? processStartTime;
+        if (createdAt.HasValue)
+        {
+            if (createdAt.Value < session.StartedAt.AddSeconds(-2)) return false;
+            if (createdAt.Value > session.StartedAt.AddSeconds(30)) return false;
+        }
+
+        return !string.IsNullOrEmpty(hit.ExecutablePath)
+            && hit.ExecutablePath.StartsWith(@"C:\Program Files\WindowsApps\", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task MonitorDescendantsAsync(LaunchSession session, CancellationToken ct)
@@ -842,6 +935,7 @@ public sealed class SessionManager : IDisposable
     /// <summary>
     /// When a session ends, remove any session-only routes bound to it and
     /// rewrite ProxiFyre's app-config.json so they don't linger across runs.
+    /// For IPC-managed sessions, sends CloseSession over the named pipe instead.
     /// We do NOT restart the ProxiFyre service here — that would mean one UAC
     /// prompt every time a tmp session exits. The on-disk file is clean, but
     /// the live service still holds the removed rule until restart, so we
@@ -850,6 +944,29 @@ public sealed class SessionManager : IDisposable
     private void CleanupSessionRoutes(LaunchSession session)
     {
         if (_backend == null) return;
+
+        // IPC-managed sessions: close the session via named pipe.
+        // No config file cleanup needed — they were never written to disk.
+        if (session.IpcManaged && _backend.IpcClient != null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await _backend.IpcClient.CloseSessionAsync(session.Id);
+                    if (result.Success)
+                        _events.Add("IpcSessionClosed", $"{session.Name}: IPC session closed");
+                    else
+                        _events.Add("IpcSessionCloseFailed", $"{session.Name}: {result.Error}");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"IPC CloseSession failed: {ex.Message}");
+                }
+            });
+            return;
+        }
+
         if (!_backend.RemoveTmpRoutesForSession(session.Id)) return;
         try
         {
@@ -1020,6 +1137,16 @@ public sealed class SessionManager : IDisposable
                     }
                 }
 
+                // 5) Pending Store App confirmation candidate.
+                // AUMID-only routes intentionally have a route key, but before
+                // confirmation they may have no exe path or process name to match.
+                // SessionSupervisor feeds all new process events here, so keep this
+                // narrow: close to launch time, non-broker, WindowsApps executable.
+                if (role == null && IsPendingStoreAppConfirmationCandidate(hit, session, processStartTime))
+                {
+                    role = "store-app-candidate";
+                }
+
                 if (role != null)
                 {
                     match = (session, role);
@@ -1091,12 +1218,46 @@ public sealed class SessionManager : IDisposable
         if (matchedSession.NeedsProcessConfirmation && IsSafeToConfirm(hit, matchedSession))
             confirmed = TryConfirmRouteFromProcess(matchedSession, hit);
 
-        // Phase 3: backend work (EnsureRoute + WriteConfig + ApplyRouting) completely
-        // outside the lock so we don't block session reads or UI refresh.
+        // IPC Phase: for IPC-managed sessions, send every merged PID to ProxiFyre
+        // via named pipe. No config write, no restart, no persistence.
+        if (matchedSession.IpcManaged && _backend?.IpcClient != null)
+        {
+            var childCreatedAt = hit.CreatedAt ?? processStartTime ?? DateTime.Now;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var ipcResult = await _backend.IpcClient.AddPidAsync(matchedSession.Id, hit.ProcessId, childCreatedAt);
+                    if (ipcResult.Success)
+                    {
+                        _events.Add("IpcAddPidOk", $"{matchedSession.Name}: child {hit.Name} (PID={hit.ProcessId}) added via IPC");
+                        if (matchedSession.RoutingStatus == "proxifyre-route-session-created")
+                        {
+                            matchedSession.RoutingStatus = "proxifyre-route-active";
+                            SessionsChanged?.Invoke();
+                            try { RouteActivated?.Invoke(matchedSession); }
+                            catch (Exception ex) { Logger.Error($"RouteActivated handler: {ex.Message}"); }
+                        }
+                    }
+                    else
+                    {
+                        _events.Add("IpcAddPidFailed", $"{matchedSession.Name}: child {hit.Name} (PID={hit.ProcessId}) IPC failed: {ipcResult.Error}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"IPC AddPid for merged child failed: {ex.Message}");
+                }
+            });
+        }
+
+        // Phase 3: legacy config-file backend work (EnsureRoute + WriteConfig + ApplyRouting)
+        // completely outside the lock so we don't block session reads or UI refresh.
         if (!confirmed &&
             !string.IsNullOrEmpty(hit.ExecutablePath) &&
             _backend != null &&
-            shouldEnsureChildRoute)
+            shouldEnsureChildRoute &&
+            ShouldAutoRouteMergedChild(matchedSession))
         {
             bool shouldRoute;
             var debounceKey = $"{matchedSession.Id}|{hit.ExecutablePath?.ToLowerInvariant() ?? ""}|{matchedSession.ProxyId}";
@@ -1136,6 +1297,17 @@ public sealed class SessionManager : IDisposable
         }
 
         return true;
+    }
+
+    private static bool ShouldAutoRouteMergedChild(LaunchSession session)
+    {
+        // Browser sessions already carry explicit proxy command-line args.
+        // For the LEGACY config-file path, Store App children must NOT be auto-
+        // persisted as global appNames rules (they pollute every matching process).
+        // Store Apps launched via AUMID are now IPC-managed (PID-isolated), so
+        // their children bypass this method entirely and are sent via named pipe.
+        return string.Equals(session.Kind, "generic", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(session.LaunchKind, "exe", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1658,6 +1830,39 @@ public sealed class SessionManager : IDisposable
                             }
                             _events.Add("ChildProcessDetected", $"{sessionName}: child {desc.Name} (PID={desc.ProcessId})");
                             SessionsChanged?.Invoke();
+
+                            if (session.IpcManaged && _backend?.IpcClient != null)
+                            {
+                                var childCreatedAt = desc.CreatedAt ?? DateTime.Now;
+                                var childPid = desc.ProcessId;
+                                var childName = desc.Name;
+                                _ = Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        var ipcResult = await _backend.IpcClient.AddPidAsync(session.Id, childPid, childCreatedAt);
+                                        if (ipcResult.Success)
+                                        {
+                                            _events.Add("IpcAddPidOk", $"{sessionName}: child {childName} (PID={childPid}) added via IPC");
+                                            if (session.RoutingStatus == "proxifyre-route-session-created")
+                                            {
+                                                session.RoutingStatus = "proxifyre-route-active";
+                                                SessionsChanged?.Invoke();
+                                                try { RouteActivated?.Invoke(session); }
+                                                catch (Exception ex) { Logger.Error($"RouteActivated handler: {ex.Message}"); }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            _events.Add("IpcAddPidFailed", $"{sessionName}: child {childName} (PID={childPid}) IPC failed: {ipcResult.Error}");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Logger.Error($"IPC AddPid for descendant failed: {ex.Message}");
+                                    }
+                                });
+                            }
 
                             if (session.NeedsProcessConfirmation)
                             {

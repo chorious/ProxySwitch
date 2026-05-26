@@ -13,7 +13,7 @@ Windows 托盘应用，把应用级代理切换从命令行里抽离出来。
 
 - Windows 10/11
 - [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)（SDK 不需要，只装 Runtime 就行）
-- [Proxifier](https://www.proxifier.com/)（可选，用于进程级代理规则）
+- [ProxiFyre](src/ProxiFyre/README.md)（可选，用于透明 per-app 代理；Store App 路由在 v1.0+ 变为硬依赖）
 
 ## 下载
 
@@ -90,8 +90,8 @@ dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile
 | v0.8.0 | ✅ | Stitch UI refresh — Theme tokens + IconRenderer + LaunchZoneControl 重写 + PillButton(Region 裁角) + Pinned pill + StatusStrip + Sections + DataGridView Sessions + 深色 Events 控制台 + 顶部 tab strip + SettingsForm SplitContainer 左 rail + LaunchConfirmDialog/RouteChild/CorrelatedHandoff Stitch 风格 |
 | v0.8.1 | ✅ | Opus review v0.8.0 修复 — + Add Pinned 走共享 OpenSettings(ReloadRuntimeServices 不再被绕过) / Actions cell 命中测试字体一致 / OpenSettings 加 owner(Dashboard 路径 Z-order + taskbar 正确) / Actions cell font 缓存重用(消除每帧 GDI alloc) / IconRenderer using var 统一 |
 | v0.8.2 | ✅ | UI 截断/列溢出修复 — PillButton GetPreferredSize 算 AccentDot + NoPadding flag(Pinned Apps 文字不再被截) / Settings Apps/Backends/Routes 三个 grid 改 Fill+MinimumWidth(不再溢视口) / DataGridView WrapMode=False / SettingsForm 默认尺寸 960×600 |
-| v0.9 | 📋 | 自动发现应用路径、应用规则预设 |
-| v1.0 | 📋 | 安装包、开机自启 |
+| v0.9 | ✅ | App Identity Resolver + Session Supervisor — AUMID 启动、进程树追踪、grace window 重连、外部进程自动 attach |
+| v1.0 | ✅ | PID/Session Routing — 用 named-pipe IPC 把 Store App / 通用 exe 的 PID 实时推给 ProxiFyre，替代全局 appNames 规则，零 UAC、会话隔离、PID 复用防护 |
 
 ## v0.5 重要方向调整：Routing Decoupled
 
@@ -169,8 +169,88 @@ Clash Verge 看到 SOCKS5 连接 → 应用它的规则路由到出口
 - ProxySwitch **不**自动注册 ProxiFyre 为 service
 - ProxySwitch **不**自动以管理员重启 service（除非用户勾 `manageService`）
 - 这些都要用户主动操作，避免静默改系统
-| v0.6 | 📋 | 全局热键、复制启动命令、代理延迟检测 |
-| v1.0 | 📋 | 安装包、开机自启 |
+
+> **v1.0 更新：** 上述 config-file + service 重启模式已被 PID/Session Routing 取代，见下文 v1.0 章节。
+
+## v1.0 PID/Session Routing（Named-Pipe IPC）
+
+v1.0 用 **PID 级实时路由** 彻底替换了 v0.6 的 "写 config → 重启 service → 全局 appNames 匹配" 模式。解决三个核心问题：
+
+| 问题 | v0.6 行为 | v1.0 行为 |
+|---|---|---|
+| **路由污染** | Store App 子进程名（`codex.exe`、`git.exe`）变成全局规则，影响无关 session | PID 绑定到 session，session 结束即清除，零残留 |
+| **反复 UAC** | 每改一次 config 就 `runas` + `sc.exe` 重启 service | named-pipe IPC 实时推送 addPid/removePid，**无需重启** |
+| **无会话边界** | `appNames` 规则持久且全局，不知道谁创建、何时该删 | 内存 session 表，`closeSession` 原子清理所有 PID |
+
+### 架构
+
+```
+ProxySwitch (用户桌面进程)
+  │
+  ├── Store App 启动 → IApplicationActivationManager
+  │     ↓
+  ├── 创建 IPC session  →  Named Pipe  →  ProxiFyre SessionRouteServer
+  │     ├─ createSession(endpoint)
+  │     ├─ addPid(pid, creationTime)     ← 根进程 + 子进程
+  │     └─ closeSession()                ← session 退出时
+  │
+  └── 通用 exe 启动 → 仍走 legacy config-file 路径（需 service 重启）
+
+ProxiFyre (LocalSystem service)
+  │
+  ├── SessionRouteServer 监听 \\.\pipe\ProxySwitch.ProxiFyre.SessionRoute
+  │     ├─ Pipe ACL: InteractiveSid + LocalSystem + Administrators
+  │     └─ 应用层 token 校验（防止任意进程伪造 addPid）
+  │
+  ├── socks_local_router::pid_to_proxy_  内存 PID 路由表
+  │     ├─ 键: PID (DWORD)
+  │     └─ 值: {proxy_id, FILETIME creation_time}
+  │
+  └── 包过滤路径
+        ├─ has_pid_route(pid) → 优先检查 PID 路由
+        ├─ creation_time 校验 → OpenProcess + GetProcessTimes
+        └─ 回退 proxy_to_names_（legacy 全局规则）
+```
+
+### 安全设计
+
+1. **Named Pipe ACL** — 仅允许交互用户、LocalSystem、管理员连接；非提升进程可正常连接。
+2. **Shared Token** — 应用层固定 GUID token，服务端拒绝缺失/错误 token 的请求。
+3. **PID Reuse Guard** — 每个 PID 路由记录进程创建时间；包过滤路径实时 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `GetProcessTimes()` 比对，创建时间不匹配则拒绝路由。
+4. **Session Cleanup** — `Dispose()` 时遍历所有 session 的 PID 集合并调用 `RemoveProcessId`，再 `ClearPidRoutes()`，确保服务崩溃/重启不留孤儿路由。
+
+### 状态机
+
+Store App session 的 `RoutingStatus` 在 v1.0 变为三态：
+
+| 状态 | 触发条件 | 含义 |
+|---|---|---|
+| `proxifyre-route-session-created` | `CreateSessionAsync` 成功 | session 已在 ProxiFyre 注册，等待第一个 PID |
+| `proxifyre-route-active` | 第一个 `AddPidAsync` 成功 | 至少有一个 PID 被路由，流量生效 |
+| `proxifyre-route-failed` | `CreateSessionAsync` 或 `AddPidAsync` 失败 | IPC 不可用或 endpoint 不存在 |
+
+### 兼容性
+
+- **ProxiFyre 旧版（无 IPC server）**: Store App 启动时检测到 IPC 不可用 → 直接报错 `IpcUnavailable`，**不**回退到 legacy child-route 模式，避免路由污染。
+- **通用 exe 启动**: 仍走 v0.6 的 config-file + service 重启路径（`EnsureRoute` + `WriteConfig` + `ApplyRoutingInBackgroundAsync`），不受 IPC 影响。
+
+## v0.9 App Identity + Session Supervisor
+
+v0.9 解决两个长期问题：
+
+1. **App Identity Resolver** — 自动把 AUMID（`OpenAI.Codex_2p2nqsd0c76g0!App`）解析成可执行路径、包家族名、进程名。Store App 不再需要用户手动填 exe 路径。
+2. **Session Supervisor** —  launcher 退出后 session 不是立刻死亡，而是进入 `waiting-for-restart` grace window（默认 20s）。期间同一应用重新启动可自动 reattach，避免误标 exited。
+
+## v0.8 Stitch UI Refresh
+
+v0.8 完全重写 UI 层：
+
+- **Theme Tokens** — 颜色、字体、圆角、边距全部 token 化，深色/浅色切换不硬编码
+- **IconRenderer** — 统一图标渲染，消除每帧 GDI 对象分配
+- **LaunchZoneControl** — Drop Zone 重写，Region 裁角 PillButton
+- **DataGridView Sessions** — 列表区 in-place rebind，不复位滚动条
+- **深色 Events 控制台** — 纯黑背景 + 语法高亮事件流
+- **SettingsForm SplitContainer** — 左 rail 导航 + 右内容区
 
 ## v0.4.1 Assist Mode 使用
 

@@ -1,0 +1,1 @@
+dotnet.SDK : C:\Users\MUSHI\AppData\Local\Microsoft\dotnet\dotnet.exe

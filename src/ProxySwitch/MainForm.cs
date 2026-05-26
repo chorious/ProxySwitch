@@ -88,6 +88,7 @@ public class MainForm : Form
         _processMonitor = new ProcessMonitor();
         var resolver = new AppIdentityResolver();
         _backend = new ProxiFyreBackend(_config, _events, resolver);
+        _backend.IpcClient = new ProxiFyreIpcClient();
         _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend, resolver);
         _sessionManager.RouteActivated += OnRouteActivated;
 
@@ -154,6 +155,7 @@ public class MainForm : Form
         try { _sessionManager?.Dispose(); } catch { }
         try { _externalWatcher?.Dispose(); } catch { }
         try { _sessionSupervisor?.Dispose(); } catch { }
+        try { _backend?.IpcClient?.Dispose(); } catch { }
         _monitor = null!;
         _processMonitor = null!;
         _sessionManager = null!;
@@ -425,6 +427,7 @@ public class MainForm : Form
         _processMonitor?.Dispose();
         _sessionManager?.Dispose();
         _externalWatcher?.Dispose();
+        _backend?.IpcClient?.Dispose();
         _tray?.Dispose();
         base.OnFormClosing(e);
     }

@@ -126,13 +126,25 @@ public class ExternalProcessWatcher : IDisposable
                 ProcessId = pid,
                 ParentProcessId = ppid,
                 Name = name,
-                ExecutablePath = path
+                ExecutablePath = path,
+                CreatedAt = ParseWmiDate(inst["CreationDate"]?.ToString()),
+                SessionId = inst["SessionId"] != null ? Convert.ToInt32(inst["SessionId"]) : null
             });
         }
         catch (Exception ex)
         {
             Logger.Error($"ExternalProcessWatcher.OnEventArrived: {ex.Message}");
         }
+    }
+
+    private static DateTime? ParseWmiDate(string? wmiDate)
+    {
+        if (string.IsNullOrEmpty(wmiDate) || wmiDate.Length < 14) return null;
+        if (DateTime.TryParseExact(wmiDate[..14], "yyyyMMddHHmmss",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var dt))
+            return dt;
+        return null;
     }
 
     public void Dispose() => StopWatcher();
@@ -144,4 +156,6 @@ public class ExternalProcessHit
     public int? ParentProcessId { get; init; }
     public string Name { get; init; } = "";
     public string ExecutablePath { get; init; } = "";
+    public DateTime? CreatedAt { get; init; }
+    public int? SessionId { get; init; }
 }

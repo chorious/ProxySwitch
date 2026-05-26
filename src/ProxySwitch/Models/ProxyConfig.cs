@@ -253,6 +253,13 @@ public class AppRoute
 
     [JsonPropertyName("workingDirectory")]
     public string WorkingDirectory { get; set; } = "";
+
+    /// <summary>
+    /// true when this route is managed via IPC (named pipe) to ProxiFyre
+    /// instead of being written to app-config.json.
+    /// </summary>
+    [JsonPropertyName("ipcManaged")]
+    public bool IpcManaged { get; set; }
 }
 
 public class SessionSupervisorConfig

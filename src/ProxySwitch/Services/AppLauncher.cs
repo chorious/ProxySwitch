@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Management;
 using System.Runtime.InteropServices;
 using ProxySwitch.Models;
 
@@ -24,6 +25,26 @@ public class AppLauncher
 
         Directory.CreateDirectory(app.UserDataDir);
         var args = BuildBrowserArgs(app);
+
+        var existing = FindBrowserProcesses(app.Exe, app.UserDataDir);
+        if (existing.Count > 0)
+        {
+            var compatible = existing.FirstOrDefault(p => BrowserCommandMatchesMode(p.CommandLine, app));
+            if (compatible != null)
+            {
+                Logger.Info($"{app.Name} already running with requested profile/proxy, PID={compatible.ProcessId}");
+                return new LaunchResult
+                {
+                    Success = true,
+                    ProcessId = compatible.ProcessId,
+                    Arguments = args
+                };
+            }
+
+            var err = $"{app.Name}: profile already running without requested proxy args ({app.UserDataDir}). Close that Chrome/Edge profile window first.";
+            Logger.Error(err);
+            return new LaunchResult { Success = false, Error = err };
+        }
 
         try
         {
@@ -190,6 +211,70 @@ public class AppLauncher
 
         return sb.ToString();
     }
+
+    private sealed class BrowserProcessInfo
+    {
+        public int ProcessId { get; init; }
+        public string CommandLine { get; init; } = "";
+    }
+
+    private static List<BrowserProcessInfo> FindBrowserProcesses(string exePath, string userDataDir)
+    {
+        var result = new List<BrowserProcessInfo>();
+        if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(userDataDir)) return result;
+
+        var exeName = Path.GetFileName(exePath);
+        var normalizedDir = userDataDir.Trim().TrimEnd('\\', '/');
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = '{EscapeWqlString(exeName)}'");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                var cmd = obj["CommandLine"]?.ToString() ?? "";
+                if (string.IsNullOrEmpty(cmd)) continue;
+                if (!cmd.Contains(normalizedDir, StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Child processes do not carry the top-level proxy flags; use the
+                // browser root command line to decide whether this profile is safe.
+                if (cmd.Contains(" --type=", StringComparison.OrdinalIgnoreCase)) continue;
+
+                result.Add(new BrowserProcessInfo
+                {
+                    ProcessId = Convert.ToInt32(obj["ProcessId"]),
+                    CommandLine = cmd
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"FindBrowserProcesses failed: {ex.Message}");
+        }
+        return result;
+    }
+
+    private bool BrowserCommandMatchesMode(string commandLine, AppConfig app)
+    {
+        if (string.IsNullOrEmpty(commandLine)) return false;
+
+        if (app.Mode == "browser-direct")
+            return commandLine.Contains("--no-proxy-server", StringComparison.OrdinalIgnoreCase)
+                && !commandLine.Contains("--proxy-server", StringComparison.OrdinalIgnoreCase);
+
+        if (app.Mode == "browser-proxy" && !string.IsNullOrEmpty(app.ProxyId))
+        {
+            var proxy = _config.Proxies.FirstOrDefault(p => p.Id == app.ProxyId);
+            if (proxy == null) return false;
+            var scheme = proxy.Type.ToLowerInvariant() == "http" ? "http" : "socks5";
+            var expected = $"{scheme}://{proxy.Host}:{proxy.Port}";
+            return commandLine.Contains("--proxy-server", StringComparison.OrdinalIgnoreCase)
+                && commandLine.Contains(expected, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static string EscapeWqlString(string value) => value.Replace("'", "''");
 
     /// <summary>
     /// Open the routing backend's app (Clash Verge / v2ray GUI) for the given proxy.
