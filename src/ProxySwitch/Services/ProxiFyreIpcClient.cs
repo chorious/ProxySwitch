@@ -101,10 +101,12 @@ public sealed class ProxiFyreIpcClient : IDisposable
             await using var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             await pipe.ConnectAsync(_connectTimeout, ct);
 
-            using var writer = new StreamWriter(pipe, Encoding.UTF8) { AutoFlush = true };
-            await writer.WriteLineAsync(json);
+            using var writer = new StreamWriter(pipe, Encoding.UTF8, bufferSize: 4096, leaveOpen: true) { AutoFlush = false };
+            using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
 
-            using var reader = new StreamReader(pipe, Encoding.UTF8);
+            await writer.WriteLineAsync(json);
+            await writer.FlushAsync();
+
             var response = await reader.ReadLineAsync(ct);
             if (string.IsNullOrEmpty(response))
                 return new IpcResult { Success = false, Error = "empty response" };

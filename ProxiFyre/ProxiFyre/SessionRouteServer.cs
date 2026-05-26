@@ -136,7 +136,7 @@ namespace ProxiFyre
             {
                 try
                 {
-                    using (var pipe = new NamedPipeServerStream(
+                    var pipe = new NamedPipeServerStream(
                         "ProxySwitch.ProxiFyre.SessionRoute",
                         PipeDirection.InOut,
                         NamedPipeServerStream.MaxAllowedServerInstances,
@@ -144,16 +144,17 @@ namespace ProxiFyre
                         PipeOptions.Asynchronous,
                         4096,
                         4096,
-                        CreatePipeSecurity()))
-                    {
-                        pipe.WaitForConnection();
-                        if (_cts.IsCancellationRequested)
-                            break;
+                        CreatePipeSecurity());
 
-                        // Handle each connection on the listener thread for simplicity.
-                        // The protocol is request/response per connection.
-                        HandleConnection(pipe);
+                    pipe.WaitForConnection();
+                    if (_cts.IsCancellationRequested)
+                    {
+                        try { pipe.Dispose(); } catch { }
+                        break;
                     }
+
+                    var connectedPipe = pipe;
+                    _ = Task.Run(() => HandleConnection(connectedPipe));
                 }
                 catch (OperationCanceledException)
                 {
@@ -166,7 +167,7 @@ namespace ProxiFyre
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error($"SessionRouteServer listener error: {ex.Message}");
+                    _logger.Error($"SessionRouteServer listener error: {ex.GetType().Name} 0x{ex.HResult:X8}: {ex.Message}");
                     Thread.Sleep(500);
                 }
             }
@@ -188,16 +189,16 @@ namespace ProxiFyre
                 PipeAccessRights.ReadWrite,
                 AccessControlType.Allow));
 
-            // Allow LocalSystem
+            // Allow LocalSystem to create additional pipe instances (required for concurrent listener loop)
             ps.AddAccessRule(new PipeAccessRule(
                 new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
-                PipeAccessRights.ReadWrite,
+                PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
                 AccessControlType.Allow));
 
             // Allow Built-in Administrators
             ps.AddAccessRule(new PipeAccessRule(
                 new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-                PipeAccessRights.ReadWrite,
+                PipeAccessRights.FullControl,
                 AccessControlType.Allow));
 
             return ps;
@@ -207,8 +208,8 @@ namespace ProxiFyre
         {
             try
             {
-                using (var reader = new StreamReader(pipe, Encoding.UTF8))
-                using (var writer = new StreamWriter(pipe, Encoding.UTF8) { AutoFlush = true })
+                using (var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true))
+                using (var writer = new StreamWriter(pipe, Encoding.UTF8, bufferSize: 4096, leaveOpen: true) { AutoFlush = false })
                 {
                     // Read one line = one JSON message
                     var json = reader.ReadLine();
@@ -221,11 +222,14 @@ namespace ProxiFyre
                     if (string.IsNullOrWhiteSpace(json))
                     {
                         writer.WriteLine(@"{""success"":false,""error"":""empty request""}");
+                        writer.Flush();
                         return;
                     }
 
                     var response = ProcessMessage(json);
                     writer.WriteLine(response);
+                    writer.Flush();
+                    try { pipe.WaitForPipeDrain(); } catch { /* best effort */ }
                 }
             }
             catch (IOException ex)
@@ -235,6 +239,10 @@ namespace ProxiFyre
             catch (Exception ex)
             {
                 _logger.Error($"SessionRouteServer handle error: {ex.Message}");
+            }
+            finally
+            {
+                try { pipe.Dispose(); } catch { /* best effort */ }
             }
         }
 
