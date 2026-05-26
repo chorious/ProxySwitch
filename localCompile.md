@@ -1,97 +1,119 @@
-# Local Compile Guide
+﻿# Local Compile Guide
 
-本机编译 ProxySwitch + ProxiFyre 的完整环境配置与命令。
+This file documents the local build and deploy path for ProxySwitch and the integrated ProxiFyre fork.
 
-## 工具链路径
+## Toolchain Paths
 
-| 工具 | 路径 | 用途 |
+| Tool | Local path | Purpose |
 |---|---|---|
-| dotnet SDK | `C:\Users\MUSHI\AppData\Local\Microsoft\dotnet\dotnet.exe` | ProxySwitch 编译 |
-| MSBuild | `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\amd64\MSBuild.exe` | ProxiFyre (C++/CLI) 编译 |
-| nuget.exe | 下载到 PATH 或本地 | 恢复 ProxiFyre 的 NuGet 包 |
+| dotnet | `C:\Users\MUSHI\AppData\Local\Microsoft\dotnet\dotnet.exe` | Build ProxySwitch. |
+| MSBuild | `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\amd64\MSBuild.exe` | Build ProxiFyre solution. |
+| vcpkg | `C:\vcpkg` or local configured vcpkg | C++ dependencies for ProxiFyre. |
+| nuget.exe | PATH or local download | Restore ProxiFyre .NET Framework packages. |
 
-## 环境依赖
+## Required Components
 
-### ProxySwitch
+ProxySwitch:
+- .NET 8 SDK for build.
+- .NET 8 Runtime for run.
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+ProxiFyre:
+- Visual Studio 2022 Build Tools.
+- C++ desktop workload with C++/CLI support.
+- .NET Framework 4.7.2 Developer Pack.
+- Windows 10/11 SDK.
+- vcpkg packages: `boost-pool:x64-windows`, `ms-gsl:x64-windows`.
+- NuGet packages from `ProxiFyre/ProxiFyre/packages.config`.
+- Windows Packet Filter driver for runtime traffic capture.
 
-### ProxiFyre
+## Restore Dependencies
 
-- Visual Studio 2022 BuildTools（含 C++ 工作负载）
-- .NET Framework 4.7.2 Developer Pack
-- [Windows Packet Filter driver](https://github.com/wiresock/ndisapi/releases)（运行时依赖，编译不需要）
-- vcpkg + `boost-pool:x64-windows` + `ms-gsl:x64-windows`
-
-## 首次配置
-
-### 1. vcpkg（ProxiFyre C++ 依赖）
+vcpkg:
 
 ```powershell
-# 设置代理（GitHub 下载需要）
-$env:HTTP_PROXY = "http://127.0.0.1:10708"
-$env:HTTPS_PROXY = "http://127.0.0.1:10708"
-
-# 假设 vcpkg 已克隆到 D:\guCodex\vcpkg
-D:\guCodex\vcpkg\vcpkg.exe install boost-pool:x64-windows ms-gsl:x64-windows
+$env:HTTP_PROXY = 'http://127.0.0.1:10708'
+$env:HTTPS_PROXY = 'http://127.0.0.1:10708'
+C:\vcpkg\vcpkg.exe install boost-pool:x64-windows ms-gsl:x64-windows
 ```
 
-### 2. NuGet 包恢复（ProxiFyre C# 依赖）
+NuGet:
 
 ```powershell
-cd ProxiFyre
+cd E:\proxyswitch\ProxiFyre
 nuget restore ProxiFyre\ProxiFyre.csproj -SolutionDirectory .
 ```
 
-依赖包：`Topshelf`、`Newtonsoft.Json`、`NLog`、`System.Runtime.InteropServices.RuntimeInformation`
+If `nuget.exe` is not available, install it or use Visual Studio restore. The expected packages include Topshelf, Newtonsoft.Json, NLog, and System.Runtime.InteropServices.RuntimeInformation.
 
-### 3. .NET Framework 4.7.2 Developer Pack
+## Build Commands
 
-如未安装，MSBuild 会报错 `MSB3644`。下载地址：
-```
-https://download.microsoft.com/download/7/1/7/71795fde-1cca-41b0-b495-00b1ab656994/NDP472-DevPack-ENU.exe
-```
-
-## 编译命令
-
-### ProxySwitch
+ProxySwitch debug build:
 
 ```powershell
-cd src/ProxySwitch
-& 'C:\Users\MUSHI\AppData\Local\Microsoft\dotnet\dotnet.exe' publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true
+cd E:\proxyswitch
+& 'C:\Users\MUSHI\AppData\Local\Microsoft\dotnet\dotnet.exe' build src\ProxySwitch\ProxySwitch.csproj
 ```
 
-输出：`src/ProxySwitch/bin/Release/net8.0-windows/win-x64/publish/ProxySwitch.exe`
-
-### ProxiFyre
+ProxySwitch publish:
 
 ```powershell
-cd ProxiFyre
+cd E:\proxyswitch\src\ProxySwitch
+& 'C:\Users\MUSHI\AppData\Local\Microsoft\dotnet\dotnet.exe' publish `
+  -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true
+```
+
+ProxiFyre release build:
+
+```powershell
+cd E:\proxyswitch\ProxiFyre
 & 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\amd64\MSBuild.exe' `
   socksify.sln /m /p:Configuration=Release /p:Platform=x64
 ```
 
-输出：`ProxiFyre/bin/exe/x64/Release/ProxiFyre.exe`
+Expected ProxiFyre outputs:
 
-## 已知问题
+```text
+E:\proxyswitch\ProxiFyre\bin\exe\x64\Release\ProxiFyre.exe
+E:\proxyswitch\ProxiFyre\bin\dll\x64\Release\socksify.dll
+```
 
-| 问题 | 原因 | 解决 |
-|---|---|---|
-| `MSB3644` 找不到 .NETFramework 4.7.2 | 未装 Developer Pack | 安装 NDP472-DevPack-ENU.exe |
-| `error C1083: 无法打开包括文件: "gsl/gsl"` | GSL 头文件缺失 | vcpkg install `ms-gsl:x64-windows`，确保 `<AdditionalIncludeDirectories>` 指向 vcpkg installed 目录 |
-| `has_pid_route()` const 编译错误 | `shared_mutex` 非 mutable | `std::shared_mutex lock_` → `mutable std::shared_mutex lock_` |
-| vcpkg 下载挂 0% | GitHub 直连不通 | 设置 `HTTP_PROXY`/`HTTPS_PROXY` 为 `127.0.0.1:10708` |
-| NuGet 包找不到 | 未 restore | `nuget restore ProxiFyre\ProxiFyre.csproj -SolutionDirectory .` |
+## Deploy ProxiFyre Runtime
 
-## 快速验证
+ProxySwitch currently reads runtime ProxiFyre from:
+
+```text
+E:\proxyswitch\backend\proxifyre\ProxiFyre.exe
+E:\proxyswitch\backend\proxifyre\app-config.json
+```
+
+After a successful ProxiFyre build, deploy the generated executable, DLL, config files, and dependencies into `backend/proxifyre`. Then restart `ProxiFyreService` if the service is installed.
+
+Minimal verification:
 
 ```powershell
-# ProxySwitch
-cd src/ProxySwitch
- dotnet --version  # 应显示 8.x
-dotnet build
+Get-ChildItem E:\proxyswitch\backend\proxifyre\ProxiFyre.exe,E:\proxyswitch\backend\proxifyre\socksify.dll |
+  Select-Object FullName,Length,LastWriteTime
 
-# ProxiFyre
-cd ProxiFyre
-MSBuild socksify.sln /p:Configuration=Release /p:Platform=x64
+Get-Service ProxiFyreService
 ```
+
+## Known Failures
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `MSB3644` for `.NETFramework,Version=v4.7.2` | Developer Pack missing | Install .NET Framework 4.7.2 Developer Pack. |
+| `fatal error C1083: gsl/gsl` | GSL headers missing | Install `ms-gsl:x64-windows` or vendor `ProxiFyre/GSL`. |
+| NuGet references missing | packages not restored | Run `nuget restore ProxiFyre\ProxiFyre.csproj -SolutionDirectory .`. |
+| `App.config` missing | incomplete ProxiFyre source copy | Restore `App.config`, `NLog.config`, and `packages.config` into `ProxiFyre/ProxiFyre/`. |
+| `pwsh.exe` not recognized during vcpkg applocal | PowerShell 7 missing | MSBuild may fallback to Windows PowerShell; install PowerShell 7 if applocal fails hard. |
+| Runtime still lacks IPC | old `backend/proxifyre` binaries | Deploy current ProxiFyre build outputs and restart service. |
+| Store App IPC returns `proxy endpoint not found` | endpoint absent from `app-config.json` | Emit all configured proxy endpoints, even with empty `appNames`. |
+
+## Current Verification Snapshot
+
+As of 2026-05-26:
+
+- ProxySwitch builds successfully with `dotnet build`.
+- Monorepo ProxiFyre build is blocked by missing project files unless restored.
+- Runtime backend binaries under `backend/proxifyre` may still be older than monorepo source outputs.
+- `app-config.json` must include endpoints needed by IPC, especially `127.0.0.1:10608` for Store Codex scenarios.

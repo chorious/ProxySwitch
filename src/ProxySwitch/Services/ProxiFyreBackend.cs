@@ -157,29 +157,37 @@ public class ProxiFyreBackend
     {
         var endpointByProxyId = _config.Proxies.ToDictionary(p => p.Id, p => $"{p.Host}:{p.Port}");
 
-        var grouped = _config.AppRoutes
+        // Collect legacy (non-IPC) appNames per proxyId.
+        var legacyAppNamesByProxyId = _config.AppRoutes
             .Where(r => r.Enabled && !r.IpcManaged && endpointByProxyId.ContainsKey(r.ProxyId))
-            .GroupBy(r => r.ProxyId);
+            .GroupBy(r => r.ProxyId)
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                {
+                    var apps = new List<string>();
+                    foreach (var route in g)
+                    {
+                        var appName = _resolver.ResolveBackendAppName(route);
+                        if (!string.IsNullOrEmpty(appName))
+                            apps.Add(appName);
+                        else
+                            _events.Add("RouteSkippedEmptyIdentity", $"{route.Name}: no resolvable exe or process name for matchKind={route.MatchKind}");
+                    }
+                    return apps.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                }
+            );
 
+        // Emit one rule per configured proxy so IPC endpoints are always registered,
+        // even when they have no legacy appNames.
         var rules = new List<ProxiFyreRule>();
-        foreach (var g in grouped)
+        foreach (var proxy in _config.Proxies)
         {
-            var apps = new List<string>();
-            foreach (var route in g)
-            {
-                var appName = _resolver.ResolveBackendAppName(route);
-                if (!string.IsNullOrEmpty(appName))
-                    apps.Add(appName);
-                else
-                    _events.Add("RouteSkippedEmptyIdentity", $"{route.Name}: no resolvable exe or process name for matchKind={route.MatchKind}");
-            }
-            apps = apps.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (apps.Count == 0) continue;
-
+            legacyAppNamesByProxyId.TryGetValue(proxy.Id, out var apps);
             rules.Add(new ProxiFyreRule
             {
-                AppNames = apps,
-                Socks5ProxyEndpoint = endpointByProxyId[g.Key],
+                AppNames = apps ?? new List<string>(),
+                Socks5ProxyEndpoint = endpointByProxyId[proxy.Id],
                 SupportedProtocols = new() { "TCP", "UDP" }
             });
         }

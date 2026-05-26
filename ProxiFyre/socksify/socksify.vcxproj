@@ -137,7 +137,7 @@
       <PreprocessorDefinitions>_CRT_RAND_S;_LIB;_ENABLE_EXTENDED_ALIGNED_STORAGE;WIN32;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>false</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)GSL\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SolutionDir)bin\lib\$(Platform)\$(Configuration)\ndisapi.lib;Iphlpapi.lib;ws2_32.lib;Advapi32.lib;Dnsapi.lib;</AdditionalDependencies>
@@ -155,7 +155,7 @@
       <PreprocessorDefinitions>_CRT_RAND_S;_LIB;_ENABLE_EXTENDED_ALIGNED_STORAGE;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>false</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)GSL\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SolutionDir)bin\lib\$(Platform)\$(Configuration)\ndisapi.lib;Iphlpapi.lib;ws2_32.lib;Advapi32.lib;Dnsapi.lib;</AdditionalDependencies>
@@ -173,7 +173,7 @@
       <PreprocessorDefinitions>_CRT_RAND_S;_LIB;_ENABLE_EXTENDED_ALIGNED_STORAGE;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>false</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)GSL\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SolutionDir)bin\lib\$(Platform)\$(Configuration)\ndisapi.lib;Iphlpapi.lib;ws2_32.lib;Advapi32.lib;Dnsapi.lib;</AdditionalDependencies>
@@ -191,7 +191,7 @@
       <PreprocessorDefinitions>_CRT_RAND_S;_LIB;_ENABLE_EXTENDED_ALIGNED_STORAGE;WIN32;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>false</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)GSL\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SolutionDir)bin\lib\$(Platform)\$(Configuration)\ndisapi.lib;Iphlpapi.lib;ws2_32.lib;Advapi32.lib;Dnsapi.lib;</AdditionalDependencies>
@@ -210,7 +210,7 @@
       <PreprocessorDefinitions>_CRT_RAND_S;_LIB;_ENABLE_EXTENDED_ALIGNED_STORAGE;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>false</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)GSL\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SolutionDir)bin\lib\$(Platform)\$(Configuration)\ndisapi.lib;Iphlpapi.lib;ws2_32.lib;Advapi32.lib;Dnsapi.lib;</AdditionalDependencies>
@@ -229,7 +229,7 @@
       <PreprocessorDefinitions>_CRT_RAND_S;_LIB;_ENABLE_EXTENDED_ALIGNED_STORAGE;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>false</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)GSL\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(SolutionDir)bin\lib\$(Platform)\$(Configuration)\ndisapi.lib;Iphlpapi.lib;ws2_32.lib;Advapi32.lib;Dnsapi.lib;</AdditionalDependencies>
