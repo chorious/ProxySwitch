@@ -79,16 +79,24 @@ E:\proxyswitch\ProxiFyre\bin\dll\x64\Release\socksify.dll
 
 ## Deploy ProxiFyre Runtime
 
-ProxySwitch currently reads runtime ProxiFyre from:
+Use the build-and-deploy helper:
 
-```text
-E:\proxyswitch\backend\proxifyre\ProxiFyre.exe
-E:\proxyswitch\backend\proxifyre\app-config.json
+```powershell
+cd E:\proxyswitch
+.\tools\proxifyre\build-and-deploy.ps1 -RestartService
 ```
 
-After a successful ProxiFyre build, deploy the generated executable, DLL, config files, and dependencies into `backend/proxifyre`. Then restart `ProxiFyreService` if the service is installed.
+This builds `ProxiFyre/socksify.sln` (Release|x64), copies outputs to `backend/proxifyre`, and restarts `ProxiFyreService`.
 
-Minimal verification:
+If the service is running and you do not want to restart it, omit `-RestartService`:
+
+```powershell
+.\tools\proxifyre\build-and-deploy.ps1
+```
+
+The script exits non-zero if required files (`ProxiFyre.exe`, `socksify.dll`, `ProxiFyre.exe.config`, `NLog.config`) fail to copy.
+
+Manual verification after deploy:
 
 ```powershell
 Get-ChildItem E:\proxyswitch\backend\proxifyre\ProxiFyre.exe,E:\proxyswitch\backend\proxifyre\socksify.dll |
@@ -102,18 +110,18 @@ Get-Service ProxiFyreService
 | Symptom | Cause | Fix |
 |---|---|---|
 | `MSB3644` for `.NETFramework,Version=v4.7.2` | Developer Pack missing | Install .NET Framework 4.7.2 Developer Pack. |
-| `fatal error C1083: gsl/gsl` | GSL headers missing | Install `ms-gsl:x64-windows` or vendor `ProxiFyre/GSL`. |
+| `fatal error C1083: gsl/gsl` | GSL headers missing | Install `ms-gsl:x64-windows` via vcpkg. Dead `$(SolutionDir)GSL\include` path was removed from `socksify.vcxproj`. |
 | NuGet references missing | packages not restored | Run `nuget restore ProxiFyre\ProxiFyre.csproj -SolutionDirectory .`. |
-| `App.config` missing | incomplete ProxiFyre source copy | Restore `App.config`, `NLog.config`, and `packages.config` into `ProxiFyre/ProxiFyre/`. |
+| `App.config` missing after clean clone | `.gitignore` ignores `*.config` | Ensure `ProxiFyre/.gitignore` unignores the three files and they are committed. |
 | `pwsh.exe` not recognized during vcpkg applocal | PowerShell 7 missing | MSBuild may fallback to Windows PowerShell; install PowerShell 7 if applocal fails hard. |
-| Runtime still lacks IPC | old `backend/proxifyre` binaries | Deploy current ProxiFyre build outputs and restart service. |
-| Store App IPC returns `proxy endpoint not found` | endpoint absent from `app-config.json` | Emit all configured proxy endpoints, even with empty `appNames`. |
+| Deploy script exits 0 despite copy failures | locked files or missing outputs not propagated | Script now fails non-zero when required files fail to copy. Use `-RestartService` to stop/start the service during deploy. |
 
 ## Current Verification Snapshot
 
 As of 2026-05-26:
 
 - ProxySwitch builds successfully with `dotnet build`.
-- Monorepo ProxiFyre build is blocked by missing project files unless restored.
-- Runtime backend binaries under `backend/proxifyre` may still be older than monorepo source outputs.
-- `app-config.json` must include endpoints needed by IPC, especially `127.0.0.1:10608` for Store Codex scenarios.
+- Monorepo ProxiFyre builds successfully with MSBuild (Release|x64) when dependencies are restored.
+- `BuildConfigJson()` emits all configured proxy endpoints, including `127.0.0.1:10608` with empty `appNames`.
+- `tools/proxifyre/build-and-deploy.ps1` automates deploy and fails non-zero when required copies fail.
+- Clean-clone reproducibility depends on `ProxiFyre/ProxiFyre/*.config` being tracked by git.

@@ -95,19 +95,37 @@ $filesToDeploy = @(
     (Join-Path $relBin 'System.Runtime.InteropServices.RuntimeInformation.dll')
 )
 
+$requiredNames = @('ProxiFyre.exe', 'socksify.dll', 'ProxiFyre.exe.config', 'NLog.config')
+$copyErrors = [System.Collections.Generic.List[string]]::new()
+
 foreach ($src in $filesToDeploy) {
+    $leaf = Split-Path $src -Leaf
+    $dest = Join-Path $deployDir $leaf
     if (Test-Path $src) {
-        $dest = Join-Path $deployDir (Split-Path $src -Leaf)
         try {
             Copy-Item $src $dest -Force
             Show-Timestamp $dest
         } catch {
-            Write-Warning "Failed to copy $(Split-Path $src -Leaf): $_"
+            $copyErrors.Add("Failed to copy $leaf : $_")
         }
     } else {
-        Write-Warning "Skip missing: $src"
+        if ($requiredNames -contains $leaf) {
+            $copyErrors.Add("Required file missing: $src")
+        } else {
+            Write-Warning "Skip missing: $src"
+        }
     }
 }
+
+if ($copyErrors.Count -gt 0) {
+    Write-Host ""
+    $msg = ($copyErrors -join "`n")
+    if (-not $RestartService) {
+        $msg += "`nFile copy failed. If files are locked by ProxiFyreService, re-run with -RestartService or stop the service manually."
+    }
+    throw "Deployment failed:`n$msg"
+}
+
 Write-Host ""
 
 # Service restart

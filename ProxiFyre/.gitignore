@@ -43,3 +43,11 @@ ProxiFyre/bin
 ProxiFyre/obj
 .vs/
 /packages/
+
+# Required ProxiFyre project files
+!ProxiFyre/App.config
+!ProxiFyre/NLog.config
+!ProxiFyre/packages.config
+
+# Build intermediates
+/socksify/x64/

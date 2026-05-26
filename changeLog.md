@@ -134,9 +134,9 @@ Core implementation:
 - `ProxiFyre/netlib/src/proxy/socks_local_router.h`: `pid_to_proxy_` route table and PID creation-time validation.
 
 Known open issues as of 2026-05-26:
-- Monorepo ProxiFyre build is incomplete until missing project files are restored.
-- Runtime backend still needs deterministic deployment from `ProxiFyre/bin` to `backend/proxifyre`.
-- `app-config.json` must emit IPC-needed proxy endpoints such as `127.0.0.1:10608` even when their `appNames` list is empty.
+- `app-config.json` endpoint emission is fixed; `BuildConfigJson()` now emits all configured proxies including `127.0.0.1:10608`.
+- Monorepo ProxiFyre build succeeds locally; reproducibility on a clean clone depends on `ProxiFyre/ProxiFyre/*.config` being tracked by git.
+- Deployment is handled by `tools/proxifyre/build-and-deploy.ps1`; the script fails non-zero when required file copies fail.
 
 ## Documentation Policy
 
