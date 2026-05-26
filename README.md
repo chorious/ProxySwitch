@@ -290,6 +290,22 @@ v0.4.2 加了**相关性 handoff 跟踪**作为第二条检测路径：
 
 **重要：相关性 handoff 是启发式推测，不是证明**。Dashboard 会清楚标注 `unverified routing`，Add Rule 仍需要用户确认。
 
+## 仓库结构
+
+```
+proxyswitch/
+├── src/ProxySwitch/          ProxySwitch 主程序（.NET 8 WinForms）
+├── src/ProxiFyre/            ProxiFyre 文档
+├── ProxiFyre/                ProxiFyre 源码 fork（C++/CLI + C# service）
+├── backend/                  运行时二进制（.gitignore，本地生成）
+└── config/                   用户配置
+```
+
 ## License
 
-MIT
+本项目采用**多许可证**发布：
+
+- **ProxySwitch**（`src/ProxySwitch/` 目录下的所有代码）：**MIT License**
+- **ProxiFyre**（`ProxiFyre/` 目录下的所有代码）：**GNU Affero General Public License v3 (AGPL-3.0)**
+
+ProxiFyre 是 [wiresock/proxifyre](https://github.com/wiresock/proxifyre) 的 fork，基于 AGPL-3.0 授权。ProxySwitch 与 ProxiFyre 通过 named-pipe IPC 通信，作为两个独立程序运行。详见 `ProxiFyre/LICENSE`。

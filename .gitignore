@@ -29,3 +29,8 @@ Thumbs.db
 
 # NuGet
 *.nupkg
+
+# ProxiFyre build artifacts
+ProxiFyre/packages/
+ProxiFyre/vcpkg_installed/
+ProxiFyre/**/*.vcxproj.user
