@@ -372,6 +372,13 @@ namespace proxy
             both
         };
 
+        static constexpr log_level process_lookup_log_level(const log_level router_log_level) noexcept
+        {
+            return router_log_level == log_level::debug || router_log_level == log_level::all
+                ? log_level::info
+                : router_log_level;
+        }
+
         /**
          * The socks_local_router class constructor, used to set up a local router to handle SOCKS traffic.
          * It creates instances of `tcp_local_redirect`, `socks5_udp_local_redirect` and `queued_packet_filter`
@@ -387,8 +394,8 @@ namespace proxy
                                     std::shared_ptr<std::ostream> pcap_log_stream = nullptr) :
                                     logger(log_level, std::move(log_stream)),
                                     static_filters_{ true, true, log_level_, log_stream_ },
-                                    process_lookup_v4_{ log_level_, log_stream_ },
-                                    process_lookup_v6_{ log_level_, log_stream_ },
+                                    process_lookup_v4_{ process_lookup_log_level(log_level_), log_stream_ },
+                                    process_lookup_v6_{ process_lookup_log_level(log_level_), log_stream_ },
                                     pcap_log_stream_(std::move(pcap_log_stream))
         {
             using namespace std::string_literals;
@@ -1002,7 +1009,12 @@ namespace proxy
                 proxy_servers_.emplace_back(
                     std::move(socks_tcp_proxy_server), std::move(socks_udp_proxy_server));
 
-                return proxy_servers_.size() - 1; // Return the index of the added proxy server
+                const auto idx = proxy_servers_.size() - 1;
+                const auto tcp_port = proxy_servers_[idx].first ? proxy_servers_[idx].first->proxy_port() : 0;
+                const auto udp_port = proxy_servers_[idx].second ? proxy_servers_[idx].second->proxy_port() : 0;
+                NETLIB_LOG(log_level::info, "Proxy index {}: endpoint={} tcp_port={} udp_port={}", idx, endpoint, tcp_port, udp_port);
+
+                return idx; // Return the index of the added proxy server
             }
             catch (const std::exception& e)
             {
@@ -1115,6 +1127,14 @@ namespace proxy
             // Called outside the lock so packet hot-path readers are not blocked.
             refresh_process_lookups();
 
+            {
+                std::shared_lock lock(lock_);
+                const auto tcp_port = proxy_servers_[proxy_id].first ? proxy_servers_[proxy_id].first->proxy_port() : 0;
+                const auto udp_port = proxy_servers_[proxy_id].second ? proxy_servers_[proxy_id].second->proxy_port() : 0;
+                NETLIB_LOG(log_level::info,
+                    "PID route added: pid={} proxy_index={} tcp_port={} udp_port={} expected_creation_filetime={}",
+                    pid, proxy_id, tcp_port, udp_port, filetime_to_uint64(creation_time));
+            }
             return true;
         }
 
@@ -1239,6 +1259,11 @@ namespace proxy
             return upper_case;
         }
 
+        static unsigned long long filetime_to_uint64(const FILETIME& ft) noexcept
+        {
+            return (static_cast<unsigned long long>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        }
+
         /**
          * @brief Checks if a PID has an active route entry (lightweight presence check).
          *        Does NOT validate creation time — caller should validate if needed.
@@ -1281,17 +1306,26 @@ namespace proxy
         void cleanup_stale_pid_routes()
         {
             std::scoped_lock lock(lock_);
+            size_t removed = 0;
             for (auto it = pid_to_proxy_.begin(); it != pid_to_proxy_.end();)
             {
                 FILETIME actual{};
                 if (!validate_pid_creation_time(it->first, it->second.creation_time, actual))
                 {
+                    NETLIB_LOG(log_level::warning,
+                        "Removing stale PID route: pid={} expected_creation_filetime={} actual_creation_filetime={}",
+                        it->first, filetime_to_uint64(it->second.creation_time), filetime_to_uint64(actual));
                     it = pid_to_proxy_.erase(it);
+                    ++removed;
                 }
                 else
                 {
                     ++it;
                 }
+            }
+            if (removed > 0)
+            {
+                NETLIB_LOG(log_level::info, "Stale PID routes cleaned: {} removed", removed);
             }
         }
 
@@ -1364,11 +1398,28 @@ namespace proxy
                 FILETIME actual{};
                 if (validate_pid_creation_time(process->id, it->second.creation_time, actual))
                 {
+                    const auto tcp_port = proxy_servers_[it->second.proxy_id].first
+                        ? proxy_servers_[it->second.proxy_id].first->proxy_port()
+                        : 0;
+                    NETLIB_LOG(log_level::debug,
+                        "PID route hit: pid={} proxy_index={} tcp_port={} expected_creation_filetime={} actual_creation_filetime={}",
+                        process->id, it->second.proxy_id, tcp_port,
+                        filetime_to_uint64(it->second.creation_time), filetime_to_uint64(actual));
                     return proxy_servers_[it->second.proxy_id].first
                         ? std::optional(proxy_servers_[it->second.proxy_id].first->proxy_port())
                         : std::nullopt;
                 }
                 // Creation time mismatch: PID reused. Fall through; stale entry cleaned by sweep.
+                NETLIB_LOG(log_level::warning,
+                    "PID route stale (creation time mismatch): pid={} expected_creation_filetime={} actual_creation_filetime={}",
+                    process->id, filetime_to_uint64(it->second.creation_time), filetime_to_uint64(actual));
+            }
+
+            {
+                const auto name_narrow = std::string(process->name.begin(), process->name.end());
+                const auto path_narrow = std::string(process->path_name.begin(), process->path_name.end());
+                NETLIB_LOG(log_level::all, "PID route miss: pid={} name={} path={}, falling back to app-name",
+                    process->id, name_narrow, path_narrow);
             }
 
             // 2) Fallback to legacy app-name-based routing
@@ -1376,12 +1427,22 @@ namespace proxy
             {
                 if (match_app_name(process_pattern, process))
                 {
+                    const auto tcp_port = proxy_servers_[proxy_id].first ? proxy_servers_[proxy_id].first->proxy_port() : 0;
+                    NETLIB_LOG(log_level::debug,
+                        "App-name route hit: pid={} proxy_index={} tcp_port={} pattern={}",
+                        process->id, proxy_id, tcp_port, std::string(process_pattern.begin(), process_pattern.end()));
                     return proxy_servers_[proxy_id].first
                         ? std::optional(proxy_servers_[proxy_id].first->proxy_port())
                         : std::nullopt;
                 }
             }
 
+            {
+                const auto name_narrow = std::string(process->name.begin(), process->name.end());
+                const auto path_narrow = std::string(process->path_name.begin(), process->path_name.end());
+                NETLIB_LOG(log_level::all, "No route for process: pid={} name={} path={}",
+                    process->id, name_narrow, path_narrow);
+            }
             return {};
         }
 
@@ -1403,11 +1464,28 @@ namespace proxy
                 FILETIME actual{};
                 if (validate_pid_creation_time(process->id, it->second.creation_time, actual))
                 {
+                    const auto udp_port = proxy_servers_[it->second.proxy_id].second
+                        ? proxy_servers_[it->second.proxy_id].second->proxy_port()
+                        : 0;
+                    NETLIB_LOG(log_level::debug,
+                        "PID route hit: pid={} proxy_index={} udp_port={} expected_creation_filetime={} actual_creation_filetime={}",
+                        process->id, it->second.proxy_id, udp_port,
+                        filetime_to_uint64(it->second.creation_time), filetime_to_uint64(actual));
                     return proxy_servers_[it->second.proxy_id].second
                         ? std::optional(proxy_servers_[it->second.proxy_id].second->proxy_port())
                         : std::nullopt;
                 }
                 // Creation time mismatch: PID reused. Fall through; stale entry cleaned by sweep.
+                NETLIB_LOG(log_level::warning,
+                    "PID route stale (creation time mismatch): pid={} expected_creation_filetime={} actual_creation_filetime={}",
+                    process->id, filetime_to_uint64(it->second.creation_time), filetime_to_uint64(actual));
+            }
+
+            {
+                const auto name_narrow = std::string(process->name.begin(), process->name.end());
+                const auto path_narrow = std::string(process->path_name.begin(), process->path_name.end());
+                NETLIB_LOG(log_level::all, "PID route miss: pid={} name={} path={}, falling back to app-name",
+                    process->id, name_narrow, path_narrow);
             }
 
             // 2) Fallback to legacy app-name-based routing
@@ -1415,12 +1493,22 @@ namespace proxy
             {
                 if (match_app_name(process_pattern, process))
                 {
+                    const auto udp_port = proxy_servers_[proxy_id].second ? proxy_servers_[proxy_id].second->proxy_port() : 0;
+                    NETLIB_LOG(log_level::debug,
+                        "App-name route hit: pid={} proxy_index={} udp_port={} pattern={}",
+                        process->id, proxy_id, udp_port, std::string(process_pattern.begin(), process_pattern.end()));
                     return proxy_servers_[proxy_id].second
                         ? std::optional(proxy_servers_[proxy_id].second->proxy_port())
                         : std::nullopt;
                 }
             }
 
+            {
+                const auto name_narrow = std::string(process->name.begin(), process->name.end());
+                const auto path_narrow = std::string(process->path_name.begin(), process->path_name.end());
+                NETLIB_LOG(log_level::all, "No route for process: pid={} name={} path={}",
+                    process->id, name_narrow, path_narrow);
+            }
             return {};
         }
 
@@ -1526,13 +1614,24 @@ namespace proxy
                 }
                 else
                 {
+                    NETLIB_LOG(log_level::all, "UDP packet process lookup miss: src={}:{} dst={}:{}",
+                        net::ip_address_v4(ip_header->ip_src), ntohs(udp_header->th_sport),
+                        net::ip_address_v4(ip_header->ip_dst), ntohs(udp_header->th_dport));
                     return std::nullopt;
                 }
             }
 
             // PID routes are authoritative: skip bypass cache if a PID route exists
-            if (process->excluded || (process->bypass_udp && !has_pid_route(process->id)))
+            if (process->excluded)
+            {
+                NETLIB_LOG(log_level::all, "UDP packet passed: process excluded pid={}", process->id);
                 return packet_filter::packet_action{ packet_filter::packet_action::action_type::pass };
+            }
+            if (process->bypass_udp && !has_pid_route(process->id))
+            {
+                NETLIB_LOG(log_level::all, "UDP packet passed: bypass cache pid={}", process->id);
+                return packet_filter::packet_action{ packet_filter::packet_action::action_type::pass };
+            }
 
             if (const auto port = process->udp_proxy_port ? process->udp_proxy_port : get_proxy_port_udp(process); port.has_value())
             {
@@ -1557,6 +1656,7 @@ namespace proxy
             else
             {
                 process->bypass_udp = true;
+                NETLIB_LOG(log_level::all, "UDP packet passed: no proxy port resolved, caching bypass pid={}", process->id);
             }
 
             return packet_filter::packet_action{ packet_filter::packet_action::action_type::pass };
@@ -1620,13 +1720,24 @@ namespace proxy
                 }
                 else
                 {
+                    NETLIB_LOG(log_level::all, "TCP packet process lookup miss: src={}:{} dst={}:{}",
+                        net::ip_address_v4(ip_header->ip_src), ntohs(tcp_header->th_sport),
+                        net::ip_address_v4(ip_header->ip_dst), ntohs(tcp_header->th_dport));
                     return std::nullopt;
                 }
             }
 
             // PID routes are authoritative: skip bypass cache if a PID route exists
-            if (process->excluded || (process->bypass_tcp && !has_pid_route(process->id)))
+            if (process->excluded)
+            {
+                NETLIB_LOG(log_level::all, "TCP packet passed: process excluded pid={}", process->id);
                 return packet_filter::packet_action{ packet_filter::packet_action::action_type::pass };
+            }
+            if (process->bypass_tcp && !has_pid_route(process->id))
+            {
+                NETLIB_LOG(log_level::all, "TCP packet passed: bypass cache pid={}", process->id);
+                return packet_filter::packet_action{ packet_filter::packet_action::action_type::pass };
+            }
 
             if (const auto port = process->tcp_proxy_port ? process->tcp_proxy_port : get_proxy_port_tcp(process); port.has_value())
             {
@@ -1657,6 +1768,7 @@ namespace proxy
             else
             {
                 process->bypass_tcp = true;
+                NETLIB_LOG(log_level::all, "TCP packet passed: no proxy port resolved, caching bypass pid={}", process->id);
             }
 
             // Otherwise, pass the packet through

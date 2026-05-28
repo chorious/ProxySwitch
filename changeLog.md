@@ -133,10 +133,59 @@ Core implementation:
 - `src/ProxySwitch/Services/SessionManager.cs`: Store App IPC session lifecycle.
 - `ProxiFyre/netlib/src/proxy/socks_local_router.h`: `pid_to_proxy_` route table and PID creation-time validation.
 
+## v1.0.3.2 — Store App Path-Root Session Attach
+
+Problem (Review Report v1.0.3.2):
+- AUMID activation returns a transient PID (e.g., shell broker), not the real Store App process that owns user traffic.
+- The live Store Codex process (`AppData\Local\OpenAI\Codex\bin\...`) predates the AUMID launch and was never added to the IPC session.
+- ProxiFyre local proxy listeners had zero accepted connections, but there were no diagnostic logs to explain why.
+- ProxySwitch exited after creating the IPC session, stopping SessionSupervisor and losing the ability to discover restarted or late-started Store App processes.
+
+Decision:
+1. **Path-root process discovery for Store Apps**: After AUMID launch, wait ~2.5s, then WMI-query processes by exe name. Score candidates by path (prioritize `WindowsApps\`, `AppData\Local\Packages\`, `AppData\Local\OpenAI\Codex\`; exclude `AppData\Roaming\npm\` for CLI isolation). Derive `StoreAppRuntimeRoot` from the best match and attach all viable PIDs to the IPC session.
+2. **Path-root merge condition**: `TryMergeActiveSession` now matches processes whose `ExecutablePath` starts with `StoreAppRuntimeRoot`, so `SessionSupervisor` automatically reattaches restarted/late Store App processes.
+3. **ProxiFyre routing diagnostics**: Add structured `NETLIB_LOG` at `info`/`warning`/`debug` levels to `associate_process_id_to_proxy`, `get_proxy_port_tcp/udp`, `process_tcp_packet`, `cleanup_stale_pid_routes`, and proxy startup. Covers PID route add/hit/miss/stale, process lookup miss, and local proxy port mapping.
+4. **ProxySwitch lifetime keep-alive**: Intercept `UserClosing` in `MainForm`. If IPC-managed sessions are active, minimize to tray instead of exiting. Tray `Quit` sets `_forceExit` and allows actual exit.
+
+Files changed:
+- `src/ProxySwitch/Models/LaunchSession.cs` — `StoreAppRuntimeRoot`
+- `src/ProxySwitch/Services/SessionManager.cs` — `DiscoverStoreAppProcessesAsync`, `QueryStoreAppCandidates`, `DeriveStoreAppRuntimeRoot`, path-root merge
+- `src/ProxySwitch/MainForm.cs` — `_forceExit`, `OnFormClosing` intercept, tray `Quit`
+- `ProxiFyre/netlib/src/proxy/socks_local_router.h` — diagnostic logs throughout routing hot path
+
 Known open issues as of 2026-05-26:
 - `app-config.json` endpoint emission is fixed; `BuildConfigJson()` now emits all configured proxies including `127.0.0.1:10608`.
 - Monorepo ProxiFyre build succeeds locally; reproducibility on a clean clone depends on `ProxiFyre/ProxiFyre/*.config` being tracked by git.
 - Deployment is handled by `tools/proxifyre/build-and-deploy.ps1`; the script fails non-zero when required file copies fail.
+- C4244 warning from `wchar_t`→`char` narrowing in debug-log wstring conversion is benign for ASCII paths and accepted.
+
+## v1.0.3.3 — PID Creation-Time Diagnostics
+
+Problem:
+- IPC `AddPid` could report success while data-plane PID routing still missed.
+- ProxySwitch parsed WMI `CreationDate` at second precision only, losing fractional seconds and the DMTF timezone offset.
+- ProxiFyre validates PID routes against exact process creation `FILETIME` when packets arrive, so a rounded creation time makes the route look stale even though the session and PID were loaded.
+- ProxiFyre config generation wrote `logLevel: Error`, hiding the new PID hit/miss diagnostics.
+
+Decision:
+- Parse WMI DMTF timestamps through `ManagementDateTimeConverter` and pass the resulting exact `FILETIME` over IPC.
+- Add request/response logging around every ProxiFyre IPC call, including session id, PID, endpoint, local timestamp, and `createdAtFileTime`.
+- Add ProxiFyre service logs for endpoint-to-proxy-handle registration, session creation, and PID add/remove.
+- Add router logs for PID add/hit/stale, expected vs actual creation filetime, app-name fallback hits, process lookup misses, and bypass-cache passes.
+- Make ProxiFyre `logLevel` configurable from `transparentBackend.logLevel`; local debug config now uses `Debug`.
+
+## v1.0.3.4 — IPC Child Routing Recovery
+
+Problem:
+- `Route Child` still used the legacy config-file path for IPC-managed Store App sessions.
+- That path wrote child executable routes, restarted ProxiFyre, and wiped the in-memory IPC session.
+- Hot-added child PIDs then failed with `session not found` even though ProxySwitch still considered the session active.
+
+Decision:
+- Treat IPC-managed session children as included by default: new descendants and merged processes are added through IPC, not by writing `app-config.json`.
+- Hide `Route Child` for IPC-managed active sessions; the action is only meaningful for legacy executable-rule sessions.
+- If any IPC `AddPid` returns `session not found`, recreate the same session endpoint and replay all currently live PIDs before retrying the failed add.
+- Keep the old config-file child-route flow only for non-IPC generic executable launches.
 
 ## Documentation Policy
 

@@ -96,6 +96,8 @@ public sealed class ProxiFyreIpcClient : IDisposable
     private async Task<IpcResult> SendAsync(object message, CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(message);
+        var requestDescription = DescribeRequest(json);
+        Logger.Info($"ProxiFyre IPC request: {requestDescription}");
         try
         {
             await using var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
@@ -109,15 +111,20 @@ public sealed class ProxiFyreIpcClient : IDisposable
 
             var response = await reader.ReadLineAsync(ct);
             if (string.IsNullOrEmpty(response))
+            {
+                Logger.Info($"ProxiFyre IPC response: {requestDescription} => empty response");
                 return new IpcResult { Success = false, Error = "empty response" };
+            }
 
             using var doc = JsonDocument.Parse(response);
             var root = doc.RootElement;
-            return new IpcResult
+            var result = new IpcResult
             {
                 Success = root.GetProperty("success").GetBoolean(),
                 Error = root.TryGetProperty("error", out var e) ? e.GetString() : null
             };
+            Logger.Info($"ProxiFyre IPC response: {requestDescription} => success={result.Success} error={result.Error ?? ""}");
+            return result;
         }
         catch (OperationCanceledException)
         {
@@ -125,12 +132,59 @@ public sealed class ProxiFyreIpcClient : IDisposable
         }
         catch (TimeoutException)
         {
+            Logger.Info($"ProxiFyre IPC response: {requestDescription} => pipe connection timeout");
             return new IpcResult { Success = false, Error = "pipe connection timeout" };
         }
         catch (Exception ex)
         {
+            Logger.Info($"ProxiFyre IPC response: {requestDescription} => exception={ex.Message}");
             return new IpcResult { Success = false, Error = ex.Message };
         }
+    }
+
+    private static string DescribeRequest(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var parts = new List<string>();
+
+            AddString(parts, root, "action");
+            AddString(parts, root, "sessionId");
+            AddString(parts, root, "endpoint");
+            AddInt(parts, root, "pid");
+
+            if (root.TryGetProperty("createdAtFileTime", out var createdAt) &&
+                createdAt.TryGetInt64(out var fileTime))
+            {
+                var local = DateTime.FromFileTimeUtc(fileTime).ToLocalTime();
+                parts.Add($"createdAtFileTime={fileTime}");
+                parts.Add($"createdAt={local:O}");
+            }
+
+            return string.Join(" ", parts);
+        }
+        catch
+        {
+            return "unparseable request";
+        }
+    }
+
+    private static void AddString(List<string> parts, JsonElement root, string name)
+    {
+        if (root.TryGetProperty(name, out var value))
+        {
+            var s = value.GetString();
+            if (!string.IsNullOrEmpty(s))
+                parts.Add($"{name}={s}");
+        }
+    }
+
+    private static void AddInt(List<string> parts, JsonElement root, string name)
+    {
+        if (root.TryGetProperty(name, out var value) && value.TryGetInt32(out var i))
+            parts.Add($"{name}={i}");
     }
 
     public void Dispose() { }

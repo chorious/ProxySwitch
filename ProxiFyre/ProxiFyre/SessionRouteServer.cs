@@ -61,6 +61,7 @@ namespace ProxiFyre
         public void SetProxyMap(Dictionary<string, IntPtr> map)
         {
             _proxyMap = map ?? new Dictionary<string, IntPtr>();
+            _logger.Info($"SessionRouteServer proxy map loaded: count={_proxyMap.Count}, endpoints=[{string.Join(", ", _proxyMap.Keys)}]");
         }
 
         /// <summary>
@@ -290,18 +291,22 @@ namespace ProxiFyre
                 return @"{""success"":false,""error"":""missing endpoint""}";
 
             if (!_proxyMap.TryGetValue(endpoint, out var handle))
+            {
+                _logger.Warn($"CreateSession failed: session={sessionId}, endpoint={endpoint}, knownEndpoints=[{string.Join(", ", _proxyMap.Keys)}]");
                 return @"{""success"":false,""error"":""proxy endpoint not found""}";
+            }
 
             lock (_sessionLock)
             {
+                var replacing = _sessions.ContainsKey(sessionId);
                 _sessions[sessionId] = new SessionState
                 {
                     Endpoint = endpoint,
                     ProxyHandle = handle
                 };
+                _logger.Info($"Session {(replacing ? "replaced" : "created")}: {sessionId} -> {endpoint}, proxyHandle={handle.ToInt64()}, activeSessions={_sessions.Count}");
             }
 
-            _logger.Info($"Session created: {sessionId} -> {endpoint}");
             return @"{""success"":true}";
         }
 
@@ -319,15 +324,18 @@ namespace ProxiFyre
                 if (!_sessions.TryGetValue(sessionId, out var state))
                     return @"{""success"":false,""error"":""session not found""}";
 
+                _logger.Info(
+                    $"Session {sessionId}: addPid request pid={pid}, endpoint={state.Endpoint}, proxyHandle={state.ProxyHandle.ToInt64()}, createdAtFileTime={createdAtFileTime}, createdAt={DescribeFileTime(createdAtFileTime)}");
+
                 bool ok = _socksify.AssociateProcessIdToProxy(pid, state.ProxyHandle, createdAtFileTime);
                 if (ok)
                 {
                     state.Pids.Add(pid);
-                    _logger.Info($"Session {sessionId}: added PID {pid}");
+                    _logger.Info($"Session {sessionId}: added PID {pid}, sessionPidCount={state.Pids.Count}");
                 }
                 else
                 {
-                    _logger.Warn($"Session {sessionId}: failed to add PID {pid}");
+                    _logger.Warn($"Session {sessionId}: failed to add PID {pid}, endpoint={state.Endpoint}, proxyHandle={state.ProxyHandle.ToInt64()}");
                 }
 
                 return $"{{\"success\":{ok.ToString().ToLower()}}}";
@@ -349,7 +357,7 @@ namespace ProxiFyre
 
                 bool ok = _socksify.RemoveProcessId(pid);
                 state.Pids.Remove(pid);
-                _logger.Info($"Session {sessionId}: removed PID {pid}");
+                _logger.Info($"Session {sessionId}: removed PID {pid}, endpoint={state.Endpoint}, sessionPidCount={state.Pids.Count}");
                 return $"{{\"success\":{ok.ToString().ToLower()}}}";
             }
         }
@@ -379,10 +387,22 @@ namespace ProxiFyre
                 }
 
                 _sessions.Remove(sessionId);
-                _logger.Info($"Session closed: {sessionId} ({state.Pids.Count} PIDs removed)");
+                _logger.Info($"Session closed: {sessionId}, endpoint={state.Endpoint}, pidsRemoved={state.Pids.Count}, activeSessions={_sessions.Count}");
             }
 
             return @"{""success"":true}";
+        }
+
+        private static string DescribeFileTime(long fileTime)
+        {
+            try
+            {
+                return DateTime.FromFileTimeUtc(fileTime).ToLocalTime().ToString("O");
+            }
+            catch
+            {
+                return "invalid";
+            }
         }
 
         private static string EscapeJson(string s)

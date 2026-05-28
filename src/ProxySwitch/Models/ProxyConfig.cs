@@ -166,6 +166,10 @@ public class TransparentBackendConfig
     [JsonPropertyName("serviceName")]
     public string ServiceName { get; set; } = "ProxiFyreService";
 
+    /// <summary>ProxiFyre runtime log level written to app-config.json.</summary>
+    [JsonPropertyName("logLevel")]
+    public string LogLevel { get; set; } = "Info";
+
     /// <summary>
     /// If true, ProxySwitch will call ProxiFyre.exe install/start/stop and use
     /// sc.exe / Service Controller APIs. Default false — user manages the

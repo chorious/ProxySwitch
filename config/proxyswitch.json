@@ -111,6 +111,7 @@
     "exe": "E:\\proxyswitch\\backend\\proxifyre\\ProxiFyre.exe",
     "configPath": "E:\\proxyswitch\\backend\\proxifyre\\app-config.json",
     "serviceName": "ProxiFyreService",
+    "logLevel": "Debug",
     "manageService": false,
     "autoRestartOnConfigChange": true
   },
@@ -128,12 +129,13 @@
       "packageFamilyName": "Claude_pzs8sxrjxfjjc",
       "packageRelativeExePath": "app\\Claude.exe",
       "resolvedExePath": "C:\\Program Files\\WindowsApps\\Claude_1.8089.0.0_x64__pzs8sxrjxfjjc\\app\\Claude.exe",
-      "resolvedAt": "2026-05-26T20:43:32.0070851+08:00",
+      "resolvedAt": "2026-05-28T09:02:08.7174847+08:00",
       "launchKind": "exe",
       "appUserModelId": "",
       "shortcutPath": "",
       "arguments": "",
-      "workingDirectory": ""
+      "workingDirectory": "",
+      "ipcManaged": false
     },
     {
       "id": "ModFinder-p10708-c5f5c5",
@@ -152,7 +154,8 @@
       "appUserModelId": "",
       "shortcutPath": "",
       "arguments": "",
-      "workingDirectory": ""
+      "workingDirectory": "",
+      "ipcManaged": false
     }
   ],
   "sessionSupervisor": {

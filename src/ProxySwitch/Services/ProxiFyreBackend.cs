@@ -194,7 +194,7 @@ public class ProxiFyreBackend
 
         var root = new ProxiFyreRoot
         {
-            LogLevel = "Error",
+            LogLevel = NormalizeProxiFyreLogLevel(_config.TransparentBackend.LogLevel),
             BypassLan = true,
             Proxies = rules
         };
@@ -205,6 +205,19 @@ public class ProxiFyreBackend
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
         return JsonSerializer.Serialize(root, options);
+    }
+
+    private static string NormalizeProxiFyreLogLevel(string? level)
+    {
+        return level?.Trim().ToLowerInvariant() switch
+        {
+            "error" => "Error",
+            "warning" or "warn" => "Warning",
+            "info" => "Info",
+            "debug" => "Debug",
+            "all" or "trace" => "All",
+            _ => "Info"
+        };
     }
 
     /// <summary>

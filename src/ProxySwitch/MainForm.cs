@@ -10,6 +10,7 @@ public class MainForm : Form
 {
     private NotifyIcon _tray = null!;
     private ContextMenuStrip _menu = null!;
+    private bool _forceExit;
 
     private ProxyConfig _config = new();
     private PortMonitor _monitor = null!;
@@ -297,7 +298,7 @@ public class MainForm : Form
 
         _menu.Items.Add("Settings...", null, (_, _) => OpenSettings());
         _menu.Items.Add(new ToolStripSeparator());
-        _menu.Items.Add("Quit", null, (_, _) => Application.Exit());
+        _menu.Items.Add("Quit", null, (_, _) => { _forceExit = true; this.Close(); });
 
         _tray.ContextMenuStrip = _menu;
         UpdateTrayIcon();
@@ -387,6 +388,26 @@ public class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // Prevent accidental exit while IPC-managed sessions are active.
+        // User can force exit via tray context menu.
+        if (!_forceExit && e.CloseReason == CloseReason.UserClosing)
+        {
+            var activeIpc = _sessionManager?.GetSessions()
+                .Where(s => s.IpcManaged && s.Status is "running" or "running-via-child" or "running-via-correlated")
+                .ToList();
+            if (activeIpc?.Count > 0)
+            {
+                e.Cancel = true;
+                this.WindowState = FormWindowState.Minimized;
+                this.Hide();
+                _tray.Visible = true;
+                _tray.ShowBalloonTip(3000, "ProxySwitch",
+                    $"{activeIpc.Count} proxy session(s) active. Keeping supervisor running in background. Click tray icon to reopen.",
+                    ToolTipIcon.Info);
+                return;
+            }
+        }
+
         // Final cleanup of any tmp routes before disposing services. We don't
         // restart ProxiFyre here — that would mean a UAC prompt on app close.
         // Next ProxySwitch startup will WriteConfig with only persistent routes

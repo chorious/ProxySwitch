@@ -225,7 +225,7 @@ public class ProcessMonitor : IDisposable
                 {
                     ProcessId = Convert.ToInt32(obj["ProcessId"]),
                     ParentProcessId = obj["ParentProcessId"] != null ? Convert.ToInt32(obj["ParentProcessId"]) : null,
-                    CreatedAt = ParseWmiDate(obj["CreationDate"]?.ToString())
+                    CreatedAt = WmiTime.ParseDmtfDateTime(obj["CreationDate"]?.ToString())
                 });
             }
         }
@@ -253,22 +253,12 @@ public class ProcessMonitor : IDisposable
                     Name = obj["Name"]?.ToString() ?? "",
                     ExecutablePath = obj["ExecutablePath"]?.ToString(),
                     CommandLine = obj["CommandLine"]?.ToString(),
-                    CreatedAt = ParseWmiDate(obj["CreationDate"]?.ToString())
+                    CreatedAt = WmiTime.ParseDmtfDateTime(obj["CreationDate"]?.ToString())
                 });
             }
         }
         catch (Exception ex) { Logger.Error($"GetFullInfoFor failed: {ex.Message}"); }
         return result;
-    }
-
-    private static DateTime? ParseWmiDate(string? wmiDate)
-    {
-        if (string.IsNullOrEmpty(wmiDate) || wmiDate.Length < 14) return null;
-        if (DateTime.TryParseExact(wmiDate[..14], "yyyyMMddHHmmss",
-            System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.None, out var dt))
-            return dt;
-        return null;
     }
 
     public static DateTime? GetProcessStartTime(int pid)
@@ -316,7 +306,7 @@ public class ProcessMonitor : IDisposable
                     Name = obj["Name"]?.ToString() ?? "",
                     ExecutablePath = obj["ExecutablePath"]?.ToString(),
                     CommandLine = obj["CommandLine"]?.ToString(),
-                    CreatedAt = ParseWmiDate(obj["CreationDate"]?.ToString()),
+                    CreatedAt = WmiTime.ParseDmtfDateTime(obj["CreationDate"]?.ToString()),
                     SessionId = obj["SessionId"] != null ? Convert.ToInt32(obj["SessionId"]) : null
                 });
             }

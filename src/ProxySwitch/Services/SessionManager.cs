@@ -10,6 +10,7 @@ public sealed class SessionManager : IDisposable
     private readonly Dictionary<string, CancellationTokenSource> _sessionCts = new();
     private readonly HashSet<string> _activeDescendantMonitors = new();
     private readonly Dictionary<string, DateTime> _lastChildRouteTime = new();
+    private readonly Dictionary<string, SemaphoreSlim> _ipcSessionRecoveryLocks = new();
     private readonly AppLauncher _launcher;
     private readonly ProcessMonitor _processMonitor;
     private readonly EventStore _events;
@@ -419,6 +420,9 @@ public sealed class SessionManager : IDisposable
             var ipcRootPid = result.ProcessId;
             var ipcRootCreated = rootCreatedAt;
 
+            _events.Add("IpcRoutePlan",
+                $"{name}: session={session.Id} endpoint={endpoint} rootPid={ipcRootPid?.ToString() ?? "none"} {WmiTime.Describe(ipcRootCreated)} routeKey={routeKey}");
+
             _ = Task.Run(async () =>
             {
                 try
@@ -435,9 +439,28 @@ public sealed class SessionManager : IDisposable
 
                     _events.Add("IpcCreateSessionOk", $"{name}: IPC session created for {endpoint}");
 
+                    // --- Store App: discover real processes beyond the AUMID activation PID ---
+                    if (target.LaunchKind == "app-user-model-id")
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await DiscoverStoreAppProcessesAsync(session, target, endpoint);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Error($"Store app discovery for {name} failed: {ex.Message}");
+                            }
+                        });
+                    }
+                    // -------------------------------------------------------------------------
+
                     if (ipcRootPid.HasValue)
                     {
-                        var addResult = await _backend.IpcClient.AddPidAsync(session.Id, ipcRootPid.Value, ipcRootCreated);
+                        _events.Add("IpcAddPidRequest",
+                            $"{name}: root PID={ipcRootPid.Value} {WmiTime.Describe(ipcRootCreated)} endpoint={endpoint}");
+                        var addResult = await AddPidToIpcSessionAsync(session, ipcRootPid.Value, ipcRootCreated);
                         if (!addResult.Success)
                         {
                             Logger.Error($"IPC AddPid failed: {addResult.Error}");
@@ -490,6 +513,298 @@ public sealed class SessionManager : IDisposable
             Session = session
         };
     }
+
+    #region Store App Process Discovery
+
+    private record StoreAppCandidate(int ProcessId, string Name, string ExecutablePath, DateTime CreatedAt, int Score);
+
+    /// <summary>
+    /// After AUMID activation, discover the real Store App process(es) by name + path
+    /// and attach them to the IPC session. Derives StoreAppRuntimeRoot from the
+    /// best-matching candidate so late/restarted processes can be merged later.
+    /// </summary>
+    private async Task DiscoverStoreAppProcessesAsync(LaunchSession session, LaunchTarget target, string endpoint)
+    {
+        // 1) Derive the exe name to search for
+        var exeName = !string.IsNullOrEmpty(target.PackageRelativeExePath)
+            ? Path.GetFileName(target.PackageRelativeExePath)
+            : AppIdentityResolver.NormalizeProcessName(target.DisplayName);
+
+        if (string.IsNullOrEmpty(exeName)) return;
+
+        _events.Add("StoreAppDiscoveryStart",
+            $"{session.Name}: exeName={exeName} endpoint={endpoint} aumid={target.AppUserModelId} pfn={target.PackageFamilyName}");
+
+        // 2) Wait for the real process to spin up (AUMID activation is async)
+        await Task.Delay(2500);
+        if (session.Status is "exited" or "failed") return;
+
+        // 3) WMI query all processes matching the exe name
+        var candidates = QueryStoreAppCandidates(exeName, target, session.StartedAt);
+        if (candidates.Count == 0)
+        {
+            _events.Add("StoreAppDiscoveryEmpty", $"{session.Name}: no {exeName} processes found after AUMID launch");
+            return;
+        }
+
+        foreach (var cand in candidates.OrderByDescending(c => c.Score))
+        {
+            _events.Add("StoreAppCandidate",
+                $"{session.Name}: PID={cand.ProcessId} name={cand.Name} score={cand.Score} {WmiTime.Describe(cand.CreatedAt)} path={cand.ExecutablePath}");
+        }
+
+        // 4) Score candidates and derive runtime root from the best match
+        var best = candidates.OrderByDescending(c => c.Score).First();
+        var runtimeRoot = DeriveStoreAppRuntimeRoot(best.ExecutablePath);
+        if (!string.IsNullOrEmpty(runtimeRoot))
+        {
+            session.StoreAppRuntimeRoot = runtimeRoot;
+            _events.Add("StoreAppRuntimeRoot", $"{session.Name}: runtime root = {runtimeRoot}");
+        }
+
+        // 5) Attach all viable candidates to the IPC session
+        int attached = 0;
+        var viableCandidates = candidates.Where(c => c.Score >= 0).ToList();
+        if (viableCandidates.Count == 0)
+        {
+            _events.Add("StoreAppDiscoveryNoViable",
+                $"{session.Name}: {candidates.Count} candidate(s), all had negative score");
+        }
+
+        foreach (var cand in viableCandidates)
+        {
+            if (cand.ProcessId == session.RootProcessId && session.Processes.Any(p => p.ProcessId == cand.ProcessId))
+                continue; // already attached
+
+            _events.Add("IpcAddPidRequest",
+                $"{session.Name}: discovered PID={cand.ProcessId} score={cand.Score} {WmiTime.Describe(cand.CreatedAt)} endpoint={endpoint}");
+            var addResult = await AddPidToIpcSessionAsync(session, cand.ProcessId, cand.CreatedAt);
+            if (addResult.Success)
+            {
+                attached++;
+                lock (session.Processes)
+                {
+                    if (!session.Processes.Any(p => p.ProcessId == cand.ProcessId))
+                    {
+                        session.Processes.Add(new TrackedProcess
+                        {
+                            ProcessId = cand.ProcessId,
+                            Name = cand.Name,
+                            ExecutablePath = cand.ExecutablePath,
+                            Role = "descendant",
+                            CreatedAt = cand.CreatedAt
+                        });
+                    }
+                }
+                _events.Add("IpcAddPidOk", $"{session.Name}: discovered {cand.Name} (PID={cand.ProcessId}) at {cand.ExecutablePath}");
+            }
+            else
+            {
+                _events.Add("IpcAddPidFailed", $"{session.Name}: discovered PID {cand.ProcessId} IPC add failed: {addResult.Error}");
+            }
+        }
+
+        if (attached > 0 && session.RoutingStatus == "proxifyre-route-session-created")
+        {
+            session.RoutingStatus = "proxifyre-route-active";
+            SessionsChanged?.Invoke();
+            try { RouteActivated?.Invoke(session); }
+            catch (Exception ex) { Logger.Error($"RouteActivated handler: {ex.Message}"); }
+        }
+
+        _events.Add("StoreAppDiscoveryComplete", $"{session.Name}: attached {attached}/{candidates.Count} discovered processes");
+    }
+
+    private List<StoreAppCandidate> QueryStoreAppCandidates(string exeName, LaunchTarget target, DateTime sessionStartedAt)
+    {
+        var result = new List<StoreAppCandidate>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT ProcessId, Name, ExecutablePath, CreationDate FROM Win32_Process WHERE Name = '{exeName.Replace("'", "''")}'");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                var pid = Convert.ToInt32(obj["ProcessId"]);
+                var name = obj["Name"]?.ToString() ?? "";
+                var path = obj["ExecutablePath"]?.ToString() ?? "";
+                var createdAt = WmiTime.ParseDmtfDateTime(obj["CreationDate"]?.ToString()) ?? DateTime.Now;
+
+                int score = 0;
+
+                // --- Negative signals ---
+                if (IsLikelyBrokerProcess(new ExternalProcessHit { Name = name, ExecutablePath = path }))
+                {
+                    score -= 50;
+                }
+                // Exclude CLI Codex (npm global install)
+                if (path.Contains(@"\AppData\Roaming\npm\", StringComparison.OrdinalIgnoreCase))
+                {
+                    score -= 100;
+                }
+
+                // --- Positive signals ---
+                // Under WindowsApps (UWP/MSIX install location)
+                if (path.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 40;
+                }
+                // Under AppData\Local\Packages (MSIX runtime)
+                if (path.Contains(@"\AppData\Local\Packages\", StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 35;
+                }
+                // Known Codex runtime path (heuristic fallback)
+                if (path.Contains(@"\AppData\Local\OpenAI\Codex\", StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 35;
+                }
+                // Created near session start time
+                var dt = (createdAt - sessionStartedAt).TotalSeconds;
+                if (dt >= -5 && dt <= 10)
+                {
+                    score += 25;
+                }
+                else if (dt < -300)
+                {
+                    score -= 10; // slightly penalize very old processes unless strongly matched by path
+                }
+
+                result.Add(new StoreAppCandidate(pid, name, path, createdAt, score));
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"QueryStoreAppCandidates failed: {ex.Message}");
+        }
+        return result;
+    }
+
+    private async Task<IpcResult> AddPidToIpcSessionAsync(LaunchSession session, int pid, DateTime createdAt, CancellationToken ct = default)
+    {
+        if (_backend?.IpcClient == null)
+            return new IpcResult { Success = false, Error = "IPC client unavailable" };
+
+        var result = await _backend.IpcClient.AddPidAsync(session.Id, pid, createdAt, ct);
+        if (result.Success || !IsIpcSessionNotFound(result))
+            return result;
+
+        _events.Add("IpcSessionMissing",
+            $"{session.Name}: session {session.Id} missing while adding PID {pid}; recreating and replaying live PIDs");
+
+        if (!await RecreateIpcSessionAndReplayAsync(session, result.Error ?? "session not found", ct))
+            return result;
+
+        var retry = await _backend.IpcClient.AddPidAsync(session.Id, pid, createdAt, ct);
+        if (retry.Success)
+            _events.Add("IpcAddPidRecovered", $"{session.Name}: PID {pid} added after IPC session recovery");
+        return retry;
+    }
+
+    private async Task<bool> RecreateIpcSessionAndReplayAsync(LaunchSession session, string reason, CancellationToken ct = default)
+    {
+        if (_backend?.IpcClient == null)
+        {
+            _events.Add("IpcSessionRecoverFailed", $"{session.Name}: IPC client unavailable");
+            return false;
+        }
+
+        var endpoint = GetIpcEndpoint(session);
+        if (string.IsNullOrEmpty(endpoint))
+        {
+            _events.Add("IpcSessionRecoverFailed", $"{session.Name}: no proxy endpoint for {session.ProxyId}");
+            return false;
+        }
+
+        var gate = GetIpcRecoveryLock(session.Id);
+        await gate.WaitAsync(ct);
+        try
+        {
+            var create = await _backend.IpcClient.CreateSessionAsync(session.Id, endpoint, ct);
+            if (!create.Success)
+            {
+                _events.Add("IpcSessionRecoverFailed", $"{session.Name}: createSession failed: {create.Error}");
+                return false;
+            }
+
+            List<TrackedProcess> live;
+            lock (session.Processes)
+                live = session.Processes.Where(p => p.ExitedAt == null).ToList();
+
+            var replayed = 0;
+            foreach (var proc in live)
+            {
+                var createdAt = proc.CreatedAt
+                    ?? ProcessMonitor.GetProcessStartTime(proc.ProcessId)
+                    ?? DateTime.Now;
+
+                var replay = await _backend.IpcClient.AddPidAsync(session.Id, proc.ProcessId, createdAt, ct);
+                if (replay.Success)
+                {
+                    replayed++;
+                }
+                else
+                {
+                    _events.Add("IpcReplayPidFailed",
+                        $"{session.Name}: PID {proc.ProcessId} ({proc.Name}) replay failed: {replay.Error}");
+                }
+            }
+
+            _events.Add("IpcSessionRecreated",
+                $"{session.Name}: session={session.Id} endpoint={endpoint} replayed={replayed}/{live.Count} reason={reason}");
+
+            if (replayed > 0 && session.Status is not "exited" and not "failed")
+            {
+                session.RoutingStatus = "proxifyre-route-active";
+                SessionsChanged?.Invoke();
+            }
+
+            return true;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private SemaphoreSlim GetIpcRecoveryLock(string sessionId)
+    {
+        lock (_ipcSessionRecoveryLocks)
+        {
+            if (!_ipcSessionRecoveryLocks.TryGetValue(sessionId, out var gate))
+            {
+                gate = new SemaphoreSlim(1, 1);
+                _ipcSessionRecoveryLocks[sessionId] = gate;
+            }
+            return gate;
+        }
+    }
+
+    private string GetIpcEndpoint(LaunchSession session)
+    {
+        if (string.IsNullOrEmpty(session.ProxyId)) return "";
+        var proxy = _config.Proxies.FirstOrDefault(p => p.Id == session.ProxyId);
+        return proxy == null ? "" : $"{proxy.Host}:{proxy.Port}";
+    }
+
+    private static bool IsIpcSessionNotFound(IpcResult result)
+        => !result.Success &&
+           result.Error?.Contains("session not found", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string? DeriveStoreAppRuntimeRoot(string? exePath)
+    {
+        if (string.IsNullOrEmpty(exePath)) return null;
+        try
+        {
+            var dir = Path.GetDirectoryName(exePath);
+            if (dir == null) return null;
+            // Go up one more level to capture version/hash subdirectories
+            var parent = Path.GetDirectoryName(dir);
+            return parent ?? dir;
+        }
+        catch { return null; }
+    }
+
+    #endregion
 
     private (string RoutingStatus, string RouteKey) ResolveInitialRoutingStatusForTarget(LaunchTarget target, string? proxyId, bool isPersistentRoute, string sessionId)
     {
@@ -629,7 +944,7 @@ public sealed class SessionManager : IDisposable
                     ParentProcessId = obj["ParentProcessId"] != null ? Convert.ToInt32(obj["ParentProcessId"]) : null,
                     Name = obj["Name"]?.ToString() ?? "",
                     ExecutablePath = obj["ExecutablePath"]?.ToString() ?? "",
-                    CreatedAt = ParseWmiDate(obj["CreationDate"]?.ToString()),
+                    CreatedAt = WmiTime.ParseDmtfDateTime(obj["CreationDate"]?.ToString()),
                     SessionId = obj["SessionId"] != null ? Convert.ToInt32(obj["SessionId"]) : null
                 };
             }
@@ -638,16 +953,6 @@ public sealed class SessionManager : IDisposable
         {
             Logger.Error($"QueryProcessHit({pid}) failed: {ex.Message}");
         }
-        return null;
-    }
-
-    private static DateTime? ParseWmiDate(string? wmiDate)
-    {
-        if (string.IsNullOrEmpty(wmiDate) || wmiDate.Length < 14) return null;
-        if (DateTime.TryParseExact(wmiDate[..14], "yyyyMMddHHmmss",
-            System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.None, out var dt))
-            return dt;
         return null;
     }
 
@@ -1147,6 +1452,18 @@ public sealed class SessionManager : IDisposable
                     role = "store-app-candidate";
                 }
 
+                // 6) Store App runtime path-root match for IPC-managed sessions.
+                //    This catches late-started or restarted Store App processes that
+                //    are not descendants in the parent chain but live under the
+                //    same runtime directory (e.g. AppData\Local\OpenAI\Codex\bin\...).
+                if (role == null && session.IpcManaged && !string.IsNullOrEmpty(session.StoreAppRuntimeRoot) && !string.IsNullOrEmpty(hit.ExecutablePath))
+                {
+                    if (hit.ExecutablePath.StartsWith(session.StoreAppRuntimeRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        role = "descendant";
+                    }
+                }
+
                 if (role != null)
                 {
                     match = (session, role);
@@ -1223,11 +1540,13 @@ public sealed class SessionManager : IDisposable
         if (matchedSession.IpcManaged && _backend?.IpcClient != null)
         {
             var childCreatedAt = hit.CreatedAt ?? processStartTime ?? DateTime.Now;
+            _events.Add("IpcAddPidRequest",
+                $"{matchedSession.Name}: merged child PID={hit.ProcessId} role={matchedRole} {WmiTime.Describe(childCreatedAt)} path={hit.ExecutablePath}");
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var ipcResult = await _backend.IpcClient.AddPidAsync(matchedSession.Id, hit.ProcessId, childCreatedAt);
+                    var ipcResult = await AddPidToIpcSessionAsync(matchedSession, hit.ProcessId, childCreatedAt);
                     if (ipcResult.Success)
                     {
                         _events.Add("IpcAddPidOk", $"{matchedSession.Name}: child {hit.Name} (PID={hit.ProcessId}) added via IPC");
@@ -1682,6 +2001,28 @@ public sealed class SessionManager : IDisposable
         if (string.IsNullOrEmpty(session.ProxyId) || exePaths == null || exePaths.Count == 0)
             return session.RoutingStatus;
 
+        if (session.IpcManaged)
+        {
+            _events.Add("IpcChildrenIncludeReplayQueued",
+                $"{session.Name}: live children are routed by default; replaying IPC session {session.Id}");
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await RecreateIpcSessionAndReplayAsync(session, "manual child include/replay");
+                    _events.Add("IpcChildrenIncluded", $"{session.Name}: live children are routed by default via IPC session {session.Id}");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"RouteDetectedChildren IPC replay failed: {ex.Message}");
+                    _events.Add("IpcSessionRecoverFailed", $"{session.Name}: {ex.Message}");
+                    session.RoutingStatus = "proxifyre-route-failed";
+                    SessionsChanged?.Invoke();
+                }
+            });
+            return session.RoutingStatus;
+        }
+
         try
         {
             // Inherit the parent launch's persistence so a child of a tmp parent
@@ -1836,11 +2177,13 @@ public sealed class SessionManager : IDisposable
                                 var childCreatedAt = desc.CreatedAt ?? DateTime.Now;
                                 var childPid = desc.ProcessId;
                                 var childName = desc.Name;
+                                _events.Add("IpcAddPidRequest",
+                                    $"{sessionName}: descendant PID={childPid} {WmiTime.Describe(childCreatedAt)} path={desc.ExecutablePath}");
                                 _ = Task.Run(async () =>
                                 {
                                     try
                                     {
-                                        var ipcResult = await _backend.IpcClient.AddPidAsync(session.Id, childPid, childCreatedAt);
+                                        var ipcResult = await AddPidToIpcSessionAsync(session, childPid, childCreatedAt);
                                         if (ipcResult.Success)
                                         {
                                             _events.Add("IpcAddPidOk", $"{sessionName}: child {childName} (PID={childPid}) added via IPC");

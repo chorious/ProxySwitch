@@ -63,6 +63,9 @@ namespace ProxiFyre
                 ? globalLogLevel
                 : LogLevel.Info;
 
+            LoggerInstance.Info(
+                $"ProxiFyre config loaded: logLevel={serviceSettings.LogLevel}, parsedLogLevel={_logLevel}, bypassLan={serviceSettings.BypassLan}, proxies={serviceSettings.Proxies.Count}, excludes={serviceSettings.ExcludedList.Count}");
+
             // Get an instance of the Socksifier
             _socksify = Socksifier.Socksifier.GetInstance(_logLevel);
 
@@ -84,6 +87,9 @@ namespace ProxiFyre
             var proxyMap = new Dictionary<string, IntPtr>();
             foreach (var appSettings in serviceSettings.Proxies)
             {
+                LoggerInstance.Info(
+                    $"Configuring SOCKS5 endpoint {appSettings.Socks5ProxyEndpoint}: protocols={string.Join(",", appSettings.SupportedProtocols)}, appNames={appSettings.AppNames.Count}");
+
                 // Add the defined SOCKS5 proxies
                 var proxy = _socksify.AddSocks5Proxy(appSettings.Socks5ProxyEndpoint, appSettings.Username,
                     appSettings.Password, appSettings.SupportedProtocolsParse,
@@ -92,6 +98,11 @@ namespace ProxiFyre
                 if (proxy.ToInt64() != -1)
                 {
                     proxyMap[appSettings.Socks5ProxyEndpoint] = proxy;
+                    LoggerInstance.Info($"SOCKS5 endpoint registered: {appSettings.Socks5ProxyEndpoint} -> proxyHandle={proxy.ToInt64()}");
+                }
+                else
+                {
+                    LoggerInstance.Warn($"Failed to register SOCKS5 endpoint: {appSettings.Socks5ProxyEndpoint}");
                 }
 
                 foreach (var appName in appSettings.AppNames)

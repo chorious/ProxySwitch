@@ -868,13 +868,13 @@ public class DashboardForm : Form
                                           or "proxifyre-route-restarting";
             bool hasLiveChild = session.Processes.Any(p => p.ExitedAt == null && p.Role != "root");
 
-            if (backendReachable && hasLiveChild)
-                list.Add("Route Child");
-            else if (session.RoutingStatus == "proxifyre-route-failed")
+            if (session.RoutingStatus == "proxifyre-route-failed")
             {
                 list.Add("Retry");
                 list.Add("Copy Hint");
             }
+            else if (backendReachable && hasLiveChild && !session.IpcManaged)
+                list.Add("Route Child");
             else if (session.RoutingStatus == "external-routing-required")
                 list.Add("Copy Hint");
         }

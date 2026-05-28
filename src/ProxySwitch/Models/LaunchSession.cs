@@ -72,6 +72,13 @@ public sealed class LaunchSession
     /// </summary>
     public bool NeedsProcessConfirmation { get; set; }
 
+    /// <summary>
+    /// For Store App sessions: the derived runtime path root (e.g. C:\Users\...\AppData\Local\OpenAI\Codex\bin).
+    /// Used by SessionSupervisor to auto-merge late-started or restarted Store App processes
+    /// into the IPC session without relying on parent-child chain.
+    /// </summary>
+    public string? StoreAppRuntimeRoot { get; set; }
+
     public int? LiveProcessId
     {
         get
