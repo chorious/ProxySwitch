@@ -101,6 +101,14 @@ public:
         LONG_PTR proxy_id) const;
     [[nodiscard]] bool exclude_process_name(const std::wstring& process_name) const;
 
+    [[nodiscard]] bool add_destination_direct_rule(
+        const std::string& name,
+        const std::vector<std::wstring>& process_names,
+        const std::vector<std::wstring>& process_paths,
+        const std::vector<std::string>& networks,
+        const std::vector<std::string>& dst_ports,
+        const std::vector<std::string>& dst_cidrs) const;
+
     /**
      * @brief Associates a process ID with a specific proxy.
      * @param process_id The process ID to associate.

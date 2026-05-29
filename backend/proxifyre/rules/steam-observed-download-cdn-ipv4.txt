@@ -1,0 +1,4 @@
+# Steam download CDN IPs observed in local ProxiFyre/Clash logs.
+# Keep this list narrow: it is bound to steam.exe and TCP/80 by app-config.
+23.212.62.0/24
+23.214.95.0/24

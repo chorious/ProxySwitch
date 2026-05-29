@@ -229,6 +229,23 @@ bool socksify_unmanaged::exclude_process_name(const std::wstring& process_name) 
     return proxy_->exclude_process_name(process_name);
 }
 
+bool socksify_unmanaged::add_destination_direct_rule(
+    const std::string& name,
+    const std::vector<std::wstring>& process_names,
+    const std::vector<std::wstring>& process_paths,
+    const std::vector<std::string>& networks,
+    const std::vector<std::string>& dst_ports,
+    const std::vector<std::string>& dst_cidrs) const
+{
+    return proxy_->add_destination_direct_rule(
+        name,
+        process_names,
+        process_paths,
+        networks,
+        dst_ports,
+        dst_cidrs);
+}
+
 /**
  * @brief Associates a process ID with a specific proxy.
  * @param process_id The process ID to associate.

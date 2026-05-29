@@ -122,6 +122,8 @@ namespace ProxiFyre
                 }
             }
 
+            ConfigureDestinationDirectRules(serviceSettings, directoryPath ?? string.Empty);
+
             _socksify.Start();
 
             // Start the session route IPC server
@@ -169,6 +171,84 @@ namespace ProxiFyre
             }
         }
 
+        private void ConfigureDestinationDirectRules(ProxiFyreSettings serviceSettings, string baseDirectory)
+        {
+            if (serviceSettings.DestinationRules.Count == 0)
+            {
+                LoggerInstance.Info("No destination direct rules configured.");
+                return;
+            }
+
+            var added = 0;
+            foreach (var rule in serviceSettings.DestinationRules)
+            {
+                if (!string.Equals(rule.Action, "direct", StringComparison.OrdinalIgnoreCase))
+                {
+                    LoggerInstance.Warn($"Destination rule {rule.Name} ignored: unsupported action '{rule.Action}'.");
+                    continue;
+                }
+
+                var cidrs = new List<string>(rule.DstCidrs ?? new List<string>());
+                foreach (var cidrSet in rule.CidrSets ?? new List<string>())
+                {
+                    foreach (var cidr in LoadCidrSet(baseDirectory, cidrSet))
+                        cidrs.Add(cidr);
+                }
+
+                var processNames = rule.ProcessNames ?? new List<string>();
+                var processPaths = rule.ProcessPaths ?? new List<string>();
+                var networks = rule.Networks ?? new List<string>();
+                var dstPorts = rule.DstPorts ?? new List<string>();
+                var ok = _socksify.AddDestinationDirectRule(
+                    rule.Name,
+                    processNames.ToArray(),
+                    processPaths.ToArray(),
+                    networks.ToArray(),
+                    dstPorts.ToArray(),
+                    cidrs.ToArray());
+
+                if (ok)
+                {
+                    added++;
+                    LoggerInstance.Info(
+                        $"Destination direct rule loaded: {rule.Name}, processNames={processNames.Count}, networks={networks.Count}, ports={dstPorts.Count}, cidrs={cidrs.Count}");
+                }
+                else
+                {
+                    LoggerInstance.Warn($"Destination direct rule failed to load: {rule.Name}");
+                }
+            }
+
+            LoggerInstance.Info($"Destination direct rules active: {added}/{serviceSettings.DestinationRules.Count}");
+        }
+
+        private static IEnumerable<string> LoadCidrSet(string baseDirectory, string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                yield break;
+
+            var fullPath = Path.IsPathRooted(path) ? path : Path.Combine(baseDirectory, path);
+            if (!File.Exists(fullPath))
+            {
+                LoggerInstance.Warn($"CIDR set not found: {fullPath}");
+                yield break;
+            }
+
+            foreach (var rawLine in File.ReadLines(fullPath))
+            {
+                var line = rawLine.Trim();
+                if (line.Length == 0 || line.StartsWith("#"))
+                    continue;
+
+                var commentStart = line.IndexOf('#');
+                if (commentStart >= 0)
+                    line = line.Substring(0, commentStart).Trim();
+
+                if (line.Length > 0)
+                    yield return line;
+            }
+        }
+
         //{
         //    "logLevel": "Warning",
         //    "proxies": [
@@ -208,12 +288,18 @@ namespace ProxiFyre
             /// <param name="proxies">The list of proxy application settings.</param>
             /// <param name="excludedList">The list of process names or paths to exclude from proxying.</param>
             /// <param name="bypassLan">Whether to bypass LAN traffic.</param>
-            public ProxiFyreSettings(string logLevel, List<AppSettings> proxies, List<string> excludedList = null, bool bypassLan = false)
+            public ProxiFyreSettings(
+                string logLevel,
+                List<AppSettings> proxies,
+                List<string> excludedList = null,
+                bool bypassLan = false,
+                List<DestinationRuleSettings> destinationRules = null)
             {
                 LogLevel = logLevel;
                 Proxies = proxies;
                 ExcludedList = excludedList ?? new List<string>();
                 BypassLan = bypassLan;
+                DestinationRules = destinationRules ?? new List<DestinationRuleSettings>();
             }
 
             /// <summary>
@@ -237,6 +323,36 @@ namespace ProxiFyre
             /// </summary>
             [JsonProperty("bypassLan", NullValueHandling = NullValueHandling.Ignore)]
             public bool BypassLan { get; }
+
+            [JsonProperty("destinationRules", NullValueHandling = NullValueHandling.Ignore)]
+            public List<DestinationRuleSettings> DestinationRules { get; }
+        }
+
+        internal class DestinationRuleSettings
+        {
+            [JsonProperty("name")]
+            public string Name { get; set; } = "direct";
+
+            [JsonProperty("action")]
+            public string Action { get; set; } = "direct";
+
+            [JsonProperty("processNames")]
+            public List<string> ProcessNames { get; set; } = new List<string>();
+
+            [JsonProperty("processPaths")]
+            public List<string> ProcessPaths { get; set; } = new List<string>();
+
+            [JsonProperty("networks")]
+            public List<string> Networks { get; set; } = new List<string>();
+
+            [JsonProperty("dstPorts")]
+            public List<string> DstPorts { get; set; } = new List<string>();
+
+            [JsonProperty("dstCidrs")]
+            public List<string> DstCidrs { get; set; } = new List<string>();
+
+            [JsonProperty("cidrSets")]
+            public List<string> CidrSets { get; set; } = new List<string>();
         }
 
         /// <summary>

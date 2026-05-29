@@ -51,11 +51,19 @@ public sealed class ProxiFyreIpcClient : IDisposable
 
     /// <summary>
     /// Adds a PID to a session. The creation time MUST be the real process creation time
-    /// (from ProcessMonitor.GetProcessStartTime or WMI), not DateTime.UtcNow.
+    /// (from GetProcessTimes, with DateTime as a fallback), not DateTime.UtcNow.
     /// </summary>
     public async Task<IpcResult> AddPidAsync(string sessionId, int pid, DateTime createdAtUtc, CancellationToken ct = default)
     {
-        long fileTime = createdAtUtc.ToFileTimeUtc();
+        var fallbackFileTime = createdAtUtc.ToFileTimeUtc();
+        var kernelFileTime = ProcessMonitor.GetProcessCreationFileTimeUtc(pid);
+        var fileTime = kernelFileTime ?? fallbackFileTime;
+        if (kernelFileTime.HasValue && kernelFileTime.Value != fallbackFileTime)
+        {
+            Logger.Info(
+                $"ProxiFyre IPC addPid using kernel creation FILETIME: pid={pid} kernel={kernelFileTime.Value} fallback={fallbackFileTime} delta={kernelFileTime.Value - fallbackFileTime}");
+        }
+
         return await SendAsync(new
         {
             action = "addPid",

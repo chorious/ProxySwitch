@@ -1,4 +1,5 @@
 using System.Management;
+using System.Runtime.InteropServices;
 using ProxySwitch.Models;
 
 namespace ProxySwitch.Services;
@@ -273,6 +274,47 @@ public class ProcessMonitor : IDisposable
             return null;
         }
     }
+
+    public static long? GetProcessCreationFileTimeUtc(int pid)
+    {
+        var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+        if (handle == IntPtr.Zero) return null;
+
+        try
+        {
+            if (!GetProcessTimes(handle, out var creation, out _, out _, out _))
+                return null;
+
+            return ((long)creation.dwHighDateTime << 32) | creation.dwLowDateTime;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileTime
+    {
+        public uint dwLowDateTime;
+        public uint dwHighDateTime;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetProcessTimes(
+        IntPtr hProcess,
+        out FileTime lpCreationTime,
+        out FileTime lpExitTime,
+        out FileTime lpKernelTime,
+        out FileTime lpUserTime);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
 
     /// <summary>
     /// Capture a snapshot of all currently running processes with full metadata.

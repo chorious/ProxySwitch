@@ -4,6 +4,39 @@
 
 // ReSharper disable CppInconsistentNaming
 
+namespace
+{
+    std::vector<std::string> to_string_vector(array<String^>^ values)
+    {
+        std::vector<std::string> result;
+        if (values == nullptr)
+            return result;
+
+        result.reserve(values->Length);
+        for each (String ^ value in values)
+        {
+            if (!String::IsNullOrWhiteSpace(value))
+                result.push_back(msclr::interop::marshal_as<std::string>(value));
+        }
+        return result;
+    }
+
+    std::vector<std::wstring> to_wstring_vector(array<String^>^ values)
+    {
+        std::vector<std::wstring> result;
+        if (values == nullptr)
+            return result;
+
+        result.reserve(values->Length);
+        for each (String ^ value in values)
+        {
+            if (!String::IsNullOrWhiteSpace(value))
+                result.push_back(msclr::interop::marshal_as<std::wstring>(value));
+        }
+        return result;
+    }
+}
+
 /// <summary>
 /// Initializes a new instance of the <see cref="Socksifier"/> class with the specified log level.
 /// Sets up the unmanaged core, log event, and starts the logging thread.
@@ -260,6 +293,26 @@ bool Socksifier::Socksifier::ExcludeProcessName(String^ excludedEntry)
         return false;
     }
     return unmanaged_ptr_->exclude_process_name(msclr::interop::marshal_as<std::wstring>(excludedEntry));
+}
+
+bool Socksifier::Socksifier::AddDestinationDirectRule(
+    String^ name,
+    array<String^>^ processNames,
+    array<String^>^ processPaths,
+    array<String^>^ networks,
+    array<String^>^ dstPorts,
+    array<String^>^ dstCidrs)
+{
+    if (!unmanaged_ptr_)
+        return false;
+
+    return unmanaged_ptr_->add_destination_direct_rule(
+        String::IsNullOrWhiteSpace(name) ? std::string("direct") : msclr::interop::marshal_as<std::string>(name),
+        to_wstring_vector(processNames),
+        to_wstring_vector(processPaths),
+        to_string_vector(networks),
+        to_string_vector(dstPorts),
+        to_string_vector(dstCidrs));
 }
 
 /// <summary>

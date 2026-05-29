@@ -204,6 +204,8 @@ public sealed class SessionManager : IDisposable
             ? (ProcessMonitor.GetProcessStartTime(result.ProcessId.Value) ?? DateTime.Now)
             : DateTime.Now;
 
+        var isIpcManaged = routingStatus == "proxifyre-route-session-created" && _backend?.IsIpcAvailable == true;
+
         // routingStatus was decided before launch (depends on backend availability)
         var session = new LaunchSession
         {
@@ -218,7 +220,8 @@ public sealed class SessionManager : IDisposable
             Status = "running",
             RoutingStatus = routingStatus,
             IsPersistentLaunch = isPersistentRoute,
-            RouteKey = routeKey
+            RouteKey = routeKey,
+            IpcManaged = isIpcManaged
         };
 
         if (result.ProcessId.HasValue)
@@ -261,6 +264,18 @@ public sealed class SessionManager : IDisposable
                                 }
                             }
                             _events.Add("ChildProcessDetected", $"{name}: child {desc.Name} (PID={desc.ProcessId})");
+                            if (session.IpcManaged && _backend?.IpcClient != null)
+                            {
+                                _ = Task.Run(async () =>
+                                {
+                                    var createdAt = desc.CreatedAt ?? ProcessMonitor.GetProcessStartTime(desc.ProcessId) ?? DateTime.Now;
+                                    var addResult = await AddPidToIpcSessionAsync(session, desc.ProcessId, createdAt);
+                                    if (addResult.Success)
+                                        _events.Add("IpcAddPidOk", $"{name}: descendant {desc.Name} (PID={desc.ProcessId}) added via IPC");
+                                    else
+                                        _events.Add("IpcAddPidFailed", $"{name}: descendant {desc.Name} IPC failed: {addResult.Error}");
+                                });
+                            }
                             SessionsChanged?.Invoke();
                         });
                 }
@@ -316,6 +331,10 @@ public sealed class SessionManager : IDisposable
             if (session.RoutingStatus == "proxifyre-route-launching")
             {
                 _ = Task.Run(() => ApplyRoutingInBackgroundAsync(session, cts.Token));
+            }
+            else if (session.IpcManaged && _backend?.IpcClient != null)
+            {
+                StartIpcRoutingForSession(session, result.ProcessId, rootCreatedAt);
             }
         }
 
@@ -376,7 +395,7 @@ public sealed class SessionManager : IDisposable
             ? (ProcessMonitor.GetProcessStartTime(result.ProcessId.Value) ?? DateTime.Now)
             : DateTime.Now;
 
-        var isIpcManaged = target.LaunchKind == "app-user-model-id" && _backend?.IsIpcAvailable == true;
+        var isIpcManaged = routingStatus == "proxifyre-route-session-created" && _backend?.IsIpcAvailable == true;
 
         var session = new LaunchSession
         {
@@ -390,7 +409,7 @@ public sealed class SessionManager : IDisposable
             RootCreatedAt = rootCreatedAt,
             Status = "running",
             RoutingStatus = routingStatus,
-            IsPersistentLaunch = isIpcManaged ? false : isPersistentRoute,
+            IsPersistentLaunch = isPersistentRoute,
             RouteKey = routeKey,
             LaunchKind = target.LaunchKind,
             AppUserModelId = target.AppUserModelId,
@@ -514,6 +533,69 @@ public sealed class SessionManager : IDisposable
         };
     }
 
+    private void StartIpcRoutingForSession(LaunchSession session, int? rootPid, DateTime rootCreatedAt)
+    {
+        if (_backend?.IpcClient == null)
+            return;
+
+        var endpoint = GetIpcEndpoint(session);
+        if (string.IsNullOrEmpty(endpoint))
+        {
+            _events.Add("IpcCreateSessionFailed", $"{session.Name}: no proxy endpoint for {session.ProxyId}");
+            session.RoutingStatus = "proxifyre-route-failed";
+            SessionsChanged?.Invoke();
+            return;
+        }
+
+        _events.Add("IpcRoutePlan",
+            $"{session.Name}: session={session.Id} endpoint={endpoint} rootPid={rootPid?.ToString() ?? "none"} {WmiTime.Describe(rootCreatedAt)} routeKey={session.RouteKey}");
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var createResult = await _backend.IpcClient.CreateSessionAsync(session.Id, endpoint);
+                if (!createResult.Success)
+                {
+                    Logger.Error($"IPC CreateSession failed: {createResult.Error}");
+                    _events.Add("IpcCreateSessionFailed", $"{session.Name}: {createResult.Error}");
+                    session.RoutingStatus = "proxifyre-route-failed";
+                    SessionsChanged?.Invoke();
+                    return;
+                }
+
+                _events.Add("IpcCreateSessionOk", $"{session.Name}: IPC session created for {endpoint}");
+
+                if (rootPid.HasValue)
+                {
+                    var addResult = await AddPidToIpcSessionAsync(session, rootPid.Value, rootCreatedAt);
+                    if (addResult.Success)
+                    {
+                        _events.Add("IpcAddPidOk", $"{session.Name}: root PID {rootPid.Value} added via IPC");
+                        if (session.Status is not "exited" and not "failed")
+                        {
+                            session.RoutingStatus = "proxifyre-route-active";
+                            SessionsChanged?.Invoke();
+                            try { RouteActivated?.Invoke(session); }
+                            catch (Exception ex) { Logger.Error($"RouteActivated handler: {ex.Message}"); }
+                        }
+                    }
+                    else
+                    {
+                        _events.Add("IpcAddPidFailed", $"{session.Name}: root PID {rootPid.Value} IPC failed: {addResult.Error}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"IPC routing for {session.Name} failed: {ex.Message}");
+                _events.Add("IpcRoutingFailed", $"{session.Name}: {ex.Message}");
+                session.RoutingStatus = "proxifyre-route-failed";
+                SessionsChanged?.Invoke();
+            }
+        });
+    }
+
     #region Store App Process Discovery
 
     private record StoreAppCandidate(int ProcessId, string Name, string ExecutablePath, DateTime CreatedAt, int Score);
@@ -561,6 +643,8 @@ public sealed class SessionManager : IDisposable
             session.StoreAppRuntimeRoot = runtimeRoot;
             _events.Add("StoreAppRuntimeRoot", $"{session.Name}: runtime root = {runtimeRoot}");
         }
+
+        UpdateStoreAppRouteFromCandidate(session, best);
 
         // 5) Attach all viable candidates to the IPC session
         int attached = 0;
@@ -613,6 +697,53 @@ public sealed class SessionManager : IDisposable
         }
 
         _events.Add("StoreAppDiscoveryComplete", $"{session.Name}: attached {attached}/{candidates.Count} discovered processes");
+    }
+
+    private void UpdateStoreAppRouteFromCandidate(LaunchSession session, StoreAppCandidate candidate)
+    {
+        if (string.IsNullOrEmpty(session.ProxyId))
+            return;
+
+        var route = _config.AppRoutes.FirstOrDefault(r =>
+            r.ProxyId == session.ProxyId &&
+            r.LaunchKind == "app-user-model-id" &&
+            (!string.IsNullOrEmpty(session.RouteKey)
+                ? _resolver.GetStableRouteKey(r) == session.RouteKey
+                : r.AppUserModelId == session.AppUserModelId));
+
+        if (route == null)
+            return;
+
+        var changed = false;
+        if (!string.IsNullOrEmpty(candidate.Name) &&
+            !string.Equals(route.ProcessName, candidate.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            route.ProcessName = candidate.Name;
+            changed = true;
+        }
+
+        if (!string.IsNullOrEmpty(candidate.ExecutablePath) &&
+            !string.Equals(route.ResolvedExePath, candidate.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+        {
+            route.ResolvedExePath = candidate.ExecutablePath;
+            route.ResolvedAt = DateTime.Now;
+            changed = true;
+        }
+
+        if (!changed)
+            return;
+
+        try
+        {
+            _backend?.SaveSwitchConfig();
+            _backend?.WriteConfig();
+            _events.Add("StoreAppRouteUpdated",
+                $"{session.Name}: saved process={candidate.Name} exe={candidate.ExecutablePath}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"UpdateStoreAppRouteFromCandidate failed: {ex.Message}");
+        }
     }
 
     private List<StoreAppCandidate> QueryStoreAppCandidates(string exeName, LaunchTarget target, DateTime sessionStartedAt)
@@ -830,14 +961,45 @@ public sealed class SessionManager : IDisposable
         if (target.LaunchKind == "app-user-model-id")
         {
             if (_backend.IsIpcAvailable)
-                return ("proxifyre-route-session-created", "");
+            {
+                try
+                {
+                    var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
+                    var result = _backend.EnsureRoute(target, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId, ipcManaged: true);
+                    _backend.WriteConfig();
+                    return ("proxifyre-route-session-created", result.RouteKey);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"ResolveInitialRoutingStatusForTarget IPC failed for {target.DisplayName}: {ex.Message}");
+                    _events.Add("BackendApplyFailed", ex.Message);
+                    return ("proxifyre-route-failed", "");
+                }
+            }
 
             _events.Add("IpcUnavailable",
                 $"{target.DisplayName}: ProxiFyre IPC unavailable for Store App routing. Please upgrade/restart ProxiFyre.");
             return ("proxifyre-route-failed", "");
         }
 
-        // Generic exe path: legacy config-file + restart
+        if (_backend.IsIpcAvailable)
+        {
+            try
+            {
+                var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
+                var result = _backend.EnsureRoute(target, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId, ipcManaged: true);
+                _backend.WriteConfig();
+                return ("proxifyre-route-session-created", result.RouteKey);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"ResolveInitialRoutingStatusForTarget IPC failed for {target.DisplayName}: {ex.Message}");
+                _events.Add("BackendApplyFailed", ex.Message);
+                return ("proxifyre-route-failed", "");
+            }
+        }
+
+        // Generic exe path fallback: legacy config-file + restart
         try
         {
             var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
@@ -1575,6 +1737,7 @@ public sealed class SessionManager : IDisposable
         if (!confirmed &&
             !string.IsNullOrEmpty(hit.ExecutablePath) &&
             _backend != null &&
+            !matchedSession.IpcManaged &&
             shouldEnsureChildRoute &&
             ShouldAutoRouteMergedChild(matchedSession))
         {
@@ -1725,6 +1888,17 @@ public sealed class SessionManager : IDisposable
                 _events.Add("ProcessMerged", $"{existingSession.Name}: {hit.Name} (PID={hit.ProcessId}) merged into existing external session");
             }
             _processMonitor.TrackPid(hit.ProcessId, () => OnMergedProcessExited(existingSession, hit.ProcessId));
+            if (existingSession.IpcManaged && _backend?.IpcClient != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    var addResult = await AddPidToIpcSessionAsync(existingSession, hit.ProcessId, rootCreatedAt);
+                    if (addResult.Success)
+                        _events.Add("IpcAddPidOk", $"{existingSession.Name}: external PID {hit.ProcessId} added via IPC");
+                    else
+                        _events.Add("IpcAddPidFailed", $"{existingSession.Name}: external PID {hit.ProcessId} IPC failed: {addResult.Error}");
+                });
+            }
             SessionsChanged?.Invoke();
             return true;
         }
@@ -1746,8 +1920,11 @@ public sealed class SessionManager : IDisposable
             // Persistent route exists in app-config.json + service is running → presumed active.
             // If ProxiFyre is stopped, the route is just not actually intercepting; we don't
             // claim active in that case.
-            RoutingStatus = ResolveExternalRoutingStatus(),
-            RouteKey = routeKey
+            RoutingStatus = route.IpcManaged && _backend?.IsIpcAvailable == true
+                ? "proxifyre-route-session-created"
+                : ResolveExternalRoutingStatus(),
+            RouteKey = routeKey,
+            IpcManaged = route.IpcManaged && _backend?.IsIpcAvailable == true
         };
         session.Processes.Add(new TrackedProcess
         {
@@ -1796,6 +1973,18 @@ public sealed class SessionManager : IDisposable
                             }
                         }
                         _events.Add("ChildProcessDetected", $"{sessionName}: child {desc.Name} (PID={desc.ProcessId})");
+                        if (session.IpcManaged && _backend?.IpcClient != null)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                var createdAt = desc.CreatedAt ?? ProcessMonitor.GetProcessStartTime(desc.ProcessId) ?? DateTime.Now;
+                                var addResult = await AddPidToIpcSessionAsync(session, desc.ProcessId, createdAt);
+                                if (addResult.Success)
+                                    _events.Add("IpcAddPidOk", $"{sessionName}: external descendant {desc.Name} (PID={desc.ProcessId}) added via IPC");
+                                else
+                                    _events.Add("IpcAddPidFailed", $"{sessionName}: external descendant {desc.Name} IPC failed: {addResult.Error}");
+                            });
+                        }
                         SessionsChanged?.Invoke();
                     });
             }
@@ -1830,6 +2019,9 @@ public sealed class SessionManager : IDisposable
                 BeginGraceWindowOrFinalize(session, "external process exited");
             }
         });
+
+        if (session.IpcManaged && _backend?.IpcClient != null)
+            StartIpcRoutingForSession(session, hit.ProcessId, rootCreatedAt);
 
         return true;
     }
@@ -1885,6 +2077,23 @@ public sealed class SessionManager : IDisposable
         // service restart (UAC + sc + 5-15s wait) to ApplyRoutingInBackgroundAsync after
         // the app has already started. App's first connections may race the route — that
         // is a ProxiFyre design limit; for tmp/persistent "try it" semantics it's fine.
+        if (_backend.IsIpcAvailable)
+        {
+            try
+            {
+                var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";
+                var result = _backend.EnsureRoute(exePath, proxyId, source: source, isPersistent: isPersistentRoute, sessionId: sessionId, ipcManaged: true);
+                _backend.WriteConfig();
+                return ("proxifyre-route-session-created", result.RouteKey);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"ResolveInitialRoutingStatus IPC failed for {exePath}: {ex.Message}");
+                _events.Add("BackendApplyFailed", ex.Message);
+                return ("proxifyre-route-failed", "");
+            }
+        }
+
         try
         {
             var source = isPersistentRoute ? "drop-zone-set" : "drop-zone-tmp";

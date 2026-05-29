@@ -196,7 +196,9 @@ public class ProxiFyreBackend
         {
             LogLevel = NormalizeProxiFyreLogLevel(_config.TransparentBackend.LogLevel),
             BypassLan = true,
-            Proxies = rules
+            Proxies = rules,
+            AppRoutes = _config.AppRoutes.Where(r => r.IsPersistent && r.Enabled).ToList(),
+            DestinationRules = LoadDestinationRulesForConfig(_config.TransparentBackend.ConfigPath)
         };
 
         var options = new JsonSerializerOptions
@@ -217,6 +219,65 @@ public class ProxiFyreBackend
             "debug" => "Debug",
             "all" or "trace" => "All",
             _ => "Info"
+        };
+    }
+
+    private List<ProxiFyreDestinationRule> LoadDestinationRulesForConfig(string path)
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                var existing = JsonSerializer.Deserialize<ProxiFyreRoot>(File.ReadAllText(path));
+                if (existing?.DestinationRules is { Count: > 0 })
+                    return existing.DestinationRules;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Load destination rules from app-config failed: {ex.Message}");
+        }
+
+        return BuildDefaultDestinationRules();
+    }
+
+    private static List<ProxiFyreDestinationRule> BuildDefaultDestinationRules()
+    {
+        return new List<ProxiFyreDestinationRule>
+        {
+            new()
+            {
+                Name = "steam-cn-direct",
+                Action = "direct",
+                ProcessNames = new() { "steam.exe" },
+                Networks = new() { "tcp", "udp" },
+                CidrSets = new() { "rules/cn-ipv4.txt" }
+            },
+            new()
+            {
+                Name = "steam-valve-direct",
+                Action = "direct",
+                ProcessNames = new() { "steam.exe" },
+                Networks = new() { "tcp", "udp" },
+                CidrSets = new() { "rules/steam-valve-ipv4.txt" }
+            },
+            new()
+            {
+                Name = "steam-download-cdn-direct",
+                Action = "direct",
+                ProcessNames = new() { "steam.exe" },
+                Networks = new() { "tcp" },
+                DstPorts = new() { "80" },
+                CidrSets = new() { "rules/steam-observed-download-cdn-ipv4.txt" }
+            },
+            new()
+            {
+                Name = "steam-udp-direct",
+                Action = "direct",
+                ProcessNames = new() { "steam.exe" },
+                Networks = new() { "udp" },
+                DstPorts = new() { "27000-27100", "3478-4380" }
+            }
         };
     }
 
@@ -244,7 +305,7 @@ public class ProxiFyreBackend
                 var existing = File.ReadAllText(path);
                 if (existing != newJson)
                 {
-                    var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                    var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
                     var bak = $"{path}.{stamp}.bak";
                     File.Copy(path, bak, overwrite: false);
                     _events.Add("ProxiFyreConfigBackup", $"saved {Path.GetFileName(bak)}");
@@ -283,6 +344,50 @@ public class ProxiFyreBackend
         catch { }
     }
 
+    public int ImportPersistentRoutesFromAppConfig()
+    {
+        var path = _config.TransparentBackend.ConfigPath;
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            return 0;
+
+        try
+        {
+            var root = JsonSerializer.Deserialize<ProxiFyreRoot>(File.ReadAllText(path));
+            if (root?.AppRoutes == null || root.AppRoutes.Count == 0)
+                return 0;
+
+            var imported = 0;
+            foreach (var route in root.AppRoutes.Where(r => r.Enabled && r.IsPersistent))
+            {
+                if (string.IsNullOrEmpty(route.ProxyId))
+                    continue;
+
+                var routeKey = _resolver.GetStableRouteKey(route);
+                var exists = _config.AppRoutes.Any(existing =>
+                    existing.ProxyId == route.ProxyId &&
+                    _resolver.GetStableRouteKey(existing) == routeKey);
+                if (exists)
+                    continue;
+
+                _config.AppRoutes.Add(route);
+                imported++;
+            }
+
+            if (imported > 0)
+            {
+                _events.Add("AppConfigRoutesImported", $"imported {imported} persistent route(s) from app-config.json");
+                SaveSwitchConfig();
+            }
+
+            return imported;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"ImportPersistentRoutesFromAppConfig failed: {ex.Message}");
+            return 0;
+        }
+    }
+
     /// <summary>
     /// Add or update an AppRoute for the given exe + proxy. Returns true if
     /// the route list actually changed. <paramref name="isPersistent"/> controls
@@ -291,7 +396,7 @@ public class ProxiFyreBackend
     /// so RemoveTmpRoutesForSession can clean it up later. Ignored when
     /// isPersistent is true.
     /// </summary>
-    public EnsureRouteResult EnsureRoute(string exePath, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null)
+    public EnsureRouteResult EnsureRoute(string exePath, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null, bool ipcManaged = false)
     {
         if (string.IsNullOrEmpty(exePath) || string.IsNullOrEmpty(proxyId))
             return new EnsureRouteResult { Changed = false, Route = null!, RouteKey = "" };
@@ -320,6 +425,11 @@ public class ProxiFyreBackend
                 existing.SessionId = sessionId;
                 changed = true;
             }
+            if (existing.IpcManaged != ipcManaged)
+            {
+                existing.IpcManaged = ipcManaged;
+                changed = true;
+            }
             if (changed) _events.Add("AppRouteUpdated", $"{procName} -> {proxyId} updated");
         }
         else
@@ -333,6 +443,7 @@ public class ProxiFyreBackend
                 ProxyId = proxyId,
                 Enabled = true,
                 IsPersistent = isPersistent,
+                IpcManaged = ipcManaged,
                 Source = source,
                 SessionId = isPersistent ? null : sessionId
             };
@@ -363,11 +474,11 @@ public class ProxiFyreBackend
         return new EnsureRouteResult { Changed = changed, Route = route, RouteKey = routeKey };
     }
 
-    public EnsureRouteResult EnsureRoute(LaunchTarget target, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null)
+    public EnsureRouteResult EnsureRoute(LaunchTarget target, string proxyId, string source = "drop-zone", bool isPersistent = true, string? sessionId = null, bool ipcManaged = false)
     {
         if (target.LaunchKind == "exe" && !string.IsNullOrEmpty(target.ExePath))
         {
-            return EnsureRoute(target.ExePath, proxyId, source, isPersistent, sessionId);
+            return EnsureRoute(target.ExePath, proxyId, source, isPersistent, sessionId, ipcManaged);
         }
 
         // For non-exe routes, look up by a stable identity.
@@ -401,6 +512,11 @@ public class ProxiFyreBackend
                 existing.SessionId = sessionId;
                 changed = true;
             }
+            if (existing.IpcManaged != ipcManaged)
+            {
+                existing.IpcManaged = ipcManaged;
+                changed = true;
+            }
             if (changed) _events.Add("AppRouteUpdated", $"{existing.Name} -> {proxyId} updated");
         }
         else
@@ -412,6 +528,7 @@ public class ProxiFyreBackend
                 ProxyId = proxyId,
                 Enabled = true,
                 IsPersistent = isPersistent,
+                IpcManaged = ipcManaged,
                 Source = source,
                 SessionId = isPersistent ? null : sessionId,
                 LaunchKind = target.LaunchKind,
@@ -791,6 +908,12 @@ public class ProxiFyreBackend
 
         [JsonPropertyName("proxies")]
         public List<ProxiFyreRule> Proxies { get; set; } = new();
+
+        [JsonPropertyName("appRoutes")]
+        public List<AppRoute> AppRoutes { get; set; } = new();
+
+        [JsonPropertyName("destinationRules")]
+        public List<ProxiFyreDestinationRule> DestinationRules { get; set; } = new();
     }
 
     private class ProxiFyreRule
@@ -809,6 +932,33 @@ public class ProxiFyreBackend
 
         [JsonPropertyName("supportedProtocols")]
         public List<string> SupportedProtocols { get; set; } = new() { "TCP", "UDP" };
+    }
+
+    private class ProxiFyreDestinationRule
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "direct";
+
+        [JsonPropertyName("action")]
+        public string Action { get; set; } = "direct";
+
+        [JsonPropertyName("processNames")]
+        public List<string> ProcessNames { get; set; } = new();
+
+        [JsonPropertyName("processPaths")]
+        public List<string> ProcessPaths { get; set; } = new();
+
+        [JsonPropertyName("networks")]
+        public List<string> Networks { get; set; } = new();
+
+        [JsonPropertyName("dstPorts")]
+        public List<string> DstPorts { get; set; } = new();
+
+        [JsonPropertyName("dstCidrs")]
+        public List<string> DstCidrs { get; set; } = new();
+
+        [JsonPropertyName("cidrSets")]
+        public List<string> CidrSets { get; set; } = new();
     }
 }
 

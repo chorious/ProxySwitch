@@ -90,6 +90,11 @@ public class MainForm : Form
         var resolver = new AppIdentityResolver();
         _backend = new ProxiFyreBackend(_config, _events, resolver);
         _backend.IpcClient = new ProxiFyreIpcClient();
+        if (_config.TransparentBackend.Enabled
+            && _config.TransparentBackend.Type == "proxifyre")
+        {
+            _backend.ImportPersistentRoutesFromAppConfig();
+        }
         _sessionManager = new SessionManager(_launcher, _processMonitor, _events, _config, _backend, resolver);
         _sessionManager.RouteActivated += OnRouteActivated;
 

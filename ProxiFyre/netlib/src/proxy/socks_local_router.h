@@ -151,6 +151,29 @@ namespace proxy
          */
         std::unordered_map<DWORD, pid_route_entry> pid_to_proxy_;
 
+        struct destination_port_range
+        {
+            uint16_t from{};
+            uint16_t to{};
+        };
+
+        struct destination_direct_rule
+        {
+            std::string name;
+            std::vector<std::wstring> process_names;
+            std::vector<std::wstring> process_paths;
+            bool match_tcp{ true };
+            bool match_udp{ true };
+            std::vector<destination_port_range> dst_ports;
+            std::vector<net::ip_subnet<net::ip_address_v4>> dst_cidrs;
+        };
+
+        std::vector<destination_direct_rule> destination_direct_rules_;
+        mutable std::shared_mutex destination_direct_rules_lock_;
+
+        std::unordered_set<uint16_t> observed_direct_udp_ports_;
+        std::mutex observed_direct_udp_ports_lock_;
+
         /**
          * @brief A list of excluded process names.
          */
@@ -1089,6 +1112,96 @@ namespace proxy
             return true;
         }
 
+        bool add_destination_direct_rule(
+            const std::string& name,
+            const std::vector<std::wstring>& process_names,
+            const std::vector<std::wstring>& process_paths,
+            const std::vector<std::string>& networks,
+            const std::vector<std::string>& dst_ports,
+            const std::vector<std::string>& dst_cidrs)
+        {
+            destination_direct_rule rule;
+            rule.name = name.empty() ? "direct" : name;
+
+            for (const auto& process_name : process_names)
+            {
+                if (!process_name.empty())
+                    rule.process_names.push_back(to_upper(process_name));
+            }
+
+            for (const auto& process_path : process_paths)
+            {
+                if (!process_path.empty())
+                    rule.process_paths.push_back(to_upper(process_path));
+            }
+
+            if (!networks.empty())
+            {
+                rule.match_tcp = false;
+                rule.match_udp = false;
+                for (auto network : networks)
+                {
+                    std::ranges::transform(network, network.begin(),
+                        [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                    if (network == "tcp")
+                        rule.match_tcp = true;
+                    else if (network == "udp")
+                        rule.match_udp = true;
+                    else if (network == "both")
+                    {
+                        rule.match_tcp = true;
+                        rule.match_udp = true;
+                    }
+                }
+            }
+
+            for (const auto& port_rule : dst_ports)
+            {
+                if (auto parsed = parse_port_range(port_rule); parsed)
+                    rule.dst_ports.push_back(parsed.value());
+                else
+                    NETLIB_LOG(log_level::warning,
+                        "Destination direct rule {} ignored invalid dstPort '{}'",
+                        rule.name, port_rule);
+            }
+
+            for (const auto& cidr_rule : dst_cidrs)
+            {
+                if (auto parsed = net::ip_subnet<net::ip_address_v4>::from_cidr(trim(cidr_rule)); parsed)
+                    rule.dst_cidrs.push_back(parsed.value());
+                else
+                    NETLIB_LOG(log_level::warning,
+                        "Destination direct rule {} ignored invalid IPv4 CIDR '{}'",
+                        rule.name, cidr_rule);
+            }
+
+            if (!rule.match_tcp && !rule.match_udp)
+            {
+                NETLIB_LOG(log_level::warning,
+                    "Destination direct rule {} ignored because no supported network is enabled", rule.name);
+                return false;
+            }
+
+            const auto match_tcp = rule.match_tcp;
+            const auto match_udp = rule.match_udp;
+
+            {
+                std::scoped_lock lock(destination_direct_rules_lock_);
+                destination_direct_rules_.push_back(std::move(rule));
+            }
+
+            NETLIB_LOG(log_level::info,
+                "Destination direct rule added: name={} processNames={} processPaths={} ports={} cidrs={} tcp={} udp={}",
+                name,
+                process_names.size(),
+                process_paths.size(),
+                dst_ports.size(),
+                dst_cidrs.size(),
+                match_tcp,
+                match_udp);
+            return true;
+        }
+
         /**
          * Associates a process ID to a specific proxy ID. This function is thread-safe.
          * @param pid the process ID to associate with a proxy
@@ -1259,6 +1372,62 @@ namespace proxy
             return upper_case;
         }
 
+        static std::string trim(const std::string& value)
+        {
+            const auto first = value.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos)
+                return {};
+            const auto last = value.find_last_not_of(" \t\r\n");
+            return value.substr(first, last - first + 1);
+        }
+
+        static std::string narrow_ascii(const std::wstring& value)
+        {
+            std::string result;
+            result.reserve(value.size());
+            for (const auto ch : value)
+                result.push_back(ch >= 0 && ch <= 0x7F ? static_cast<char>(ch) : '?');
+            return result;
+        }
+
+        static std::optional<uint16_t> parse_port(const std::string& value)
+        {
+            const auto text = trim(value);
+            if (text.empty())
+                return {};
+
+            int port = 0;
+            const auto* begin = text.data();
+            const auto* end = text.data() + text.size();
+            if (auto [p, ec] = std::from_chars(begin, end, port); ec == std::errc() && p == end && port >= 0 && port <= 65535)
+                return static_cast<uint16_t>(port);
+
+            return {};
+        }
+
+        static std::optional<destination_port_range> parse_port_range(const std::string& value)
+        {
+            const auto text = trim(value);
+            if (text.empty())
+                return {};
+
+            if (const auto pos = text.find('-'); pos != std::string::npos)
+            {
+                auto from = parse_port(text.substr(0, pos));
+                auto to = parse_port(text.substr(pos + 1));
+                if (!from || !to)
+                    return {};
+                if (from.value() > to.value())
+                    std::swap(from, to);
+                return destination_port_range{ from.value(), to.value() };
+            }
+
+            if (auto port = parse_port(text); port)
+                return destination_port_range{ port.value(), port.value() };
+
+            return {};
+        }
+
         static unsigned long long filetime_to_uint64(const FILETIME& ft) noexcept
         {
             return (static_cast<unsigned long long>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
@@ -1378,6 +1547,113 @@ namespace proxy
             return (app.find(L'\\') != std::wstring::npos || app.find(L'/') != std::wstring::npos)
                     ? (process->path_name.find(app) != std::wstring::npos)
                     : (process->name.find(app) != std::wstring::npos);
+        }
+
+        static bool matches_process_filter(
+            const destination_direct_rule& rule,
+            const std::shared_ptr<iphelper::network_process>& process)
+        {
+            if (!process)
+                return false;
+
+            if (rule.process_names.empty() && rule.process_paths.empty())
+                return true;
+
+            for (const auto& process_name : rule.process_names)
+            {
+                if (process->name.find(process_name) != std::wstring::npos)
+                    return true;
+            }
+
+            for (const auto& process_path : rule.process_paths)
+            {
+                if (process->path_name.find(process_path) != std::wstring::npos)
+                    return true;
+            }
+
+            return false;
+        }
+
+        static bool matches_port_filter(const destination_direct_rule& rule, const uint16_t dst_port)
+        {
+            if (rule.dst_ports.empty())
+                return true;
+
+            return std::ranges::any_of(rule.dst_ports, [dst_port](const auto& range)
+            {
+                return dst_port >= range.from && dst_port <= range.to;
+            });
+        }
+
+        static bool matches_cidr_filter(
+            const destination_direct_rule& rule,
+            const net::ip_address_v4& dst_ip)
+        {
+            if (rule.dst_cidrs.empty())
+                return true;
+
+            return std::ranges::any_of(rule.dst_cidrs, [&dst_ip](const auto& subnet)
+            {
+                return subnet.address_in_subnet(dst_ip);
+            });
+        }
+
+        bool match_destination_direct_rule(
+            const bool is_tcp,
+            const std::shared_ptr<iphelper::network_process>& process,
+            const net::ip_address_v4& dst_ip,
+            const uint16_t dst_port,
+            std::string& matched_rule_name) const
+        {
+            std::shared_lock lock(destination_direct_rules_lock_);
+            for (const auto& rule : destination_direct_rules_)
+            {
+                if ((is_tcp && !rule.match_tcp) || (!is_tcp && !rule.match_udp))
+                    continue;
+                if (!matches_process_filter(rule, process))
+                    continue;
+                if (!matches_port_filter(rule, dst_port))
+                    continue;
+                if (!matches_cidr_filter(rule, dst_ip))
+                    continue;
+
+                matched_rule_name = rule.name;
+                return true;
+            }
+
+            return false;
+        }
+
+        void log_traffic_decision(
+            const log_level level,
+            const char* protocol,
+            const char* decision,
+            const std::string& rule_name,
+            const std::shared_ptr<iphelper::network_process>& process,
+            const net::ip_address_v4& src_ip,
+            const uint16_t src_port,
+            const net::ip_address_v4& dst_ip,
+            const uint16_t dst_port,
+            const uint16_t proxy_port) const
+        {
+            if (!process)
+                return;
+
+            const auto process_name = narrow_ascii(process->name);
+            const auto process_path = narrow_ascii(process->path_name);
+            NETLIB_LOG(level,
+                "TrafficDecision protocol={} decision={} rule={} pid={} process={} path={} src={}:{} dst={}:{} proxy_port={}",
+                protocol,
+                decision,
+                rule_name,
+                process->id,
+                process_name,
+                process_path,
+                src_ip,
+                src_port,
+                dst_ip,
+                dst_port,
+                proxy_port);
         }
 
         /**
@@ -1635,6 +1911,34 @@ namespace proxy
 
             if (const auto port = process->udp_proxy_port ? process->udp_proxy_port : get_proxy_port_udp(process); port.has_value())
             {
+                const auto dst_ip = net::ip_address_v4(ip_header->ip_dst);
+                const auto dst_port = ntohs(udp_header->th_dport);
+                std::string direct_rule_name;
+                if (match_destination_direct_rule(false, process, dst_ip, dst_port, direct_rule_name))
+                {
+                    bool should_log = false;
+                    {
+                        std::scoped_lock lock(observed_direct_udp_ports_lock_);
+                        should_log = observed_direct_udp_ports_.insert(ntohs(udp_header->th_sport)).second;
+                    }
+                    if (should_log)
+                    {
+                        log_traffic_decision(
+                            log_level::info,
+                            "UDP",
+                            "DIRECT",
+                            direct_rule_name,
+                            process,
+                            net::ip_address_v4(ip_header->ip_src),
+                            ntohs(udp_header->th_sport),
+                            dst_ip,
+                            dst_port,
+                            0);
+                    }
+
+                    return packet_filter::packet_action{ packet_filter::packet_action::action_type::pass };
+                }
+
                 if (udp_redirect_->is_new_endpoint(buffer))
                 {
                     std::scoped_lock lock(udp_mapper_lock_);
@@ -1644,6 +1948,18 @@ namespace proxy
                         "Redirecting UDP {} : {} -> {} : {}",
                         net::ip_address_v4(ip_header->ip_src), ntohs(udp_header->th_sport),
                         net::ip_address_v4(ip_header->ip_dst), ntohs(udp_header->th_dport));
+
+                    log_traffic_decision(
+                        log_level::info,
+                        "UDP",
+                        "PROXY",
+                        "route",
+                        process,
+                        net::ip_address_v4(ip_header->ip_src),
+                        ntohs(udp_header->th_sport),
+                        dst_ip,
+                        dst_port,
+                        port.value());
                 }
 
                 if (udp_redirect_->process_client_to_server_packet(buffer, htons(port.value())))
@@ -1744,6 +2060,25 @@ namespace proxy
                 // If this is a SYN packet (connection initiation), map the source port to the destination endpoint
                 if ((tcp_header->th_flags & (TH_SYN | TH_ACK)) == TH_SYN)
                 {
+                    const auto dst_ip = net::ip_address_v4(ip_header->ip_dst);
+                    const auto dst_port = ntohs(tcp_header->th_dport);
+                    std::string direct_rule_name;
+                    if (match_destination_direct_rule(true, process, dst_ip, dst_port, direct_rule_name))
+                    {
+                        log_traffic_decision(
+                            log_level::info,
+                            "TCP",
+                            "DIRECT",
+                            direct_rule_name,
+                            process,
+                            net::ip_address_v4(ip_header->ip_src),
+                            ntohs(tcp_header->th_sport),
+                            dst_ip,
+                            dst_port,
+                            0);
+                        return packet_filter::packet_action{ packet_filter::packet_action::action_type::pass };
+                    }
+
                     std::scoped_lock lock(tcp_mapper_lock_);
                     tcp_mapper_[ntohs(tcp_header->th_sport)] =
                         tcp_mapper_entry{
@@ -1756,6 +2091,18 @@ namespace proxy
                         "Redirecting TCP: {} : {} -> {} : {}",
                         net::ip_address_v4(ip_header->ip_src), ntohs(tcp_header->th_sport),
                         net::ip_address_v4(ip_header->ip_dst), ntohs(tcp_header->th_dport));
+
+                    log_traffic_decision(
+                        log_level::info,
+                        "TCP",
+                        "PROXY",
+                        "route",
+                        process,
+                        net::ip_address_v4(ip_header->ip_src),
+                        ntohs(tcp_header->th_sport),
+                        dst_ip,
+                        dst_port,
+                        port.value());
                 }
 
                 // Attempt to process the packet for client-to-server redirection

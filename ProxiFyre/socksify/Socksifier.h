@@ -277,6 +277,18 @@ namespace Socksifier
         bool ExcludeProcessName(String^ excludedEntry);
 
         /// <summary>
+        /// Adds a destination-level direct rule. Matching packets pass through even
+        /// when the process has a PID/app-name proxy route.
+        /// </summary>
+        bool AddDestinationDirectRule(
+            String^ name,
+            array<String^>^ processNames,
+            array<String^>^ processPaths,
+            array<String^>^ networks,
+            array<String^>^ dstPorts,
+            array<String^>^ dstCidrs);
+
+        /// <summary>
         /// Associates a process ID with a specific proxy.
         /// </summary>
         /// <param name="pid">The process ID to associate.</param>
