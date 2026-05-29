@@ -31,10 +31,16 @@ Generic desktop app route:
 Dashboard/drop -> SessionManager -> ProxiFyreBackend -> app-config.json -> service restart
 ```
 
-Store App PID/session route:
+PID/session route:
 
 ```text
-AUMID launch -> SessionManager -> ProxiFyreIpcClient -> SessionRouteServer -> pid_to_proxy_
+AUMID or IPC-managed launch -> SessionManager -> ProxiFyreIpcClient -> SessionRouteServer -> pid_to_proxy_
+```
+
+Destination direct rule:
+
+```text
+packet -> socks_local_router -> destinationRules(process/protocol/port/CIDR) -> DIRECT or SOCKS5
 ```
 
 ## Hot Files
@@ -48,9 +54,10 @@ AUMID launch -> SessionManager -> ProxiFyreIpcClient -> SessionRouteServer -> pi
 | ProxiFyre config | `src/ProxySwitch/Services/ProxiFyreBackend.cs` |
 | IPC client | `src/ProxySwitch/Services/ProxiFyreIpcClient.cs` |
 | IPC server | `ProxiFyre/ProxiFyre/SessionRouteServer.cs` |
-| PID router | `ProxiFyre/netlib/src/proxy/socks_local_router.h` |
+| PID and destination router | `ProxiFyre/netlib/src/proxy/socks_local_router.h` |
 | C++/CLI wrapper | `ProxiFyre/socksify/Socksifier.*`, `socksify_unmanaged.*` |
 | Config model | `src/ProxySwitch/Models/ProxyConfig.cs`, `LaunchSession.cs` |
+| Steam direct rules | `backend/proxifyre/rules/steam-valve-ipv4.txt`, `steam-observed-download-cdn-ipv4.txt` |
 
 ## Non-Negotiables
 
@@ -58,6 +65,9 @@ AUMID launch -> SessionManager -> ProxiFyreIpcClient -> SessionRouteServer -> pi
 - Do not add `codex.exe`, `git.exe`, `python.exe`, `powershell.exe`, or `conda.exe` as persistent ProxiFyre `appNames`.
 - PID routes must validate process creation time to avoid PID reuse bugs.
 - Store App IPC sessions are ephemeral; they should not persist child process names to `proxyswitch.json`.
+- MSIX/AUMID identity routes must not fall back to bare process-name matching; that can capture unrelated CLI tools with the same exe name.
+- Keep Steam direct rules scoped to `steam.exe`; do not direct-route `steamwebhelper.exe`.
+- Steam CDN/download bypass belongs in ProxiFyre destination rules, not Clash domain rules.
 - Runtime ProxiFyre binaries in `backend/proxifyre` must match the monorepo source when testing IPC.
 - `app-config.json` must include SOCKS5 endpoints needed by IPC, even if their `appNames` list is empty.
 
@@ -67,6 +77,8 @@ AUMID launch -> SessionManager -> ProxiFyreIpcClient -> SessionRouteServer -> pi
 - Build or deploy ProxiFyre: see `localCompile.md`.
 - Understand PID/session routing: read `changeLog.md` v1.0 and `SessionManager.cs`.
 - Diagnose Store App routing: check `ProxiFyreIpcClient.cs`, `SessionRouteServer.cs`, `app-config.json`, and ProxiFyre service logs.
+- Diagnose Steam downloads: check ProxiFyre `TrafficDecision` logs and `backend/proxifyre/rules/`.
+- Diagnose Steam web/Workshop SSL issues: verify `steamwebhelper.exe` is proxied and Clash sniffer is enabled for Steam domains.
 - Diagnose Chrome routing: inspect browser launch args and existing Chrome profile/process state before touching ProxiFyre.
 
 ## Commit Documentation Checklist

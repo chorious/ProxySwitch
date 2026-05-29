@@ -105,6 +105,21 @@ Get-ChildItem E:\proxyswitch\backend\proxifyre\ProxiFyre.exe,E:\proxyswitch\back
 Get-Service ProxiFyreService
 ```
 
+Verify destination direct rules:
+
+```powershell
+Get-Content E:\proxyswitch\backend\proxifyre\logs\logfile_$(Get-Date -Format yyyy-MM-dd).txt -Tail 200 |
+  Select-String 'Destination direct rule loaded|Destination direct rules active|TrafficDecision'
+```
+
+Expected current Steam rule files:
+
+```text
+E:\proxyswitch\backend\proxifyre\rules\cn-ipv4.txt
+E:\proxyswitch\backend\proxifyre\rules\steam-valve-ipv4.txt
+E:\proxyswitch\backend\proxifyre\rules\steam-observed-download-cdn-ipv4.txt
+```
+
 ## Known Failures
 
 | Symptom | Cause | Fix |
@@ -115,13 +130,18 @@ Get-Service ProxiFyreService
 | `App.config` missing after clean clone | `.gitignore` ignores `*.config` | Ensure `ProxiFyre/.gitignore` unignores the three files and they are committed. |
 | `pwsh.exe` not recognized during vcpkg applocal | PowerShell 7 missing | MSBuild may fallback to Windows PowerShell; install PowerShell 7 if applocal fails hard. |
 | Deploy script exits 0 despite copy failures | locked files or missing outputs not propagated | Script now fails non-zero when required files fail to copy. Use `-RestartService` to stop/start the service during deploy. |
+| Steam downloads still hit `10708` | destination CIDR not covered or ProxiFyre not restarted | Add the observed IPv4 range to the appropriate file under `backend/proxifyre/rules/`, then restart `ProxiFyreService`. |
+| Steam Workshop reports invalid SSL certificate | Clash only sees IP:port from ProxiFyre and cannot apply domain rules | Keep `steamwebhelper.exe` proxied and enable Clash `sniffer` for Steam domains. |
+| CLI `claude.exe` is captured unexpectedly | stale MSIX route or broad process-name fallback | Remove stale Claude route from `config/proxyswitch.json` and restart ProxiFyre. Long term, MSIX/AUMID routes must not fall back to bare process-name matching. |
 
 ## Current Verification Snapshot
 
-As of 2026-05-26:
+As of 2026-05-30:
 
 - ProxySwitch builds successfully with `dotnet build`.
 - Monorepo ProxiFyre builds successfully with MSBuild (Release|x64) when dependencies are restored.
 - `BuildConfigJson()` emits all configured proxy endpoints, including `127.0.0.1:10608` with empty `appNames`.
 - `tools/proxifyre/build-and-deploy.ps1` automates deploy and fails non-zero when required copies fail.
 - Clean-clone reproducibility depends on `ProxiFyre/ProxiFyre/*.config` being tracked by git.
+- ProxiFyre destination direct rules load successfully for Steam CN, Valve AS32590, observed download CDN, and Steam UDP rules.
+- The stale Claude persistent route has been removed from tracked config; current CLI `claude.exe` should not be routed by ProxySwitch unless explicitly re-added.

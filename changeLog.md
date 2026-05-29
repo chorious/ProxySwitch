@@ -16,6 +16,7 @@ This file records project history and design decisions. It is not a usage guide 
 | v0.8 | done | Stitch UI refresh and dashboard/settings polish. |
 | v0.9 | done | Stable app identity and session supervisor. |
 | v1.0 | in progress | PID/session routing over named-pipe IPC for Store Apps. |
+| v1.1 | in progress | Destination direct rules, Steam CDN bypass, and route hygiene cleanup. |
 
 ## v0.1 - MVP Launcher
 
@@ -186,6 +187,36 @@ Decision:
 - Hide `Route Child` for IPC-managed active sessions; the action is only meaningful for legacy executable-rule sessions.
 - If any IPC `AddPid` returns `session not found`, recreate the same session endpoint and replay all currently live PIDs before retrying the failed add.
 - Keep the old config-file child-route flow only for non-IPC generic executable launches.
+
+## v1.1.0 — Destination Direct Rules and Steam Route Hygiene
+
+Problem:
+- Steam downloads and workshop/web traffic do not fit a single PID-only proxy model.
+- Steam download traffic can hit Chinese CDN, Valve AS32590 ranges, and observed Akamai ranges that should bypass the traffic proxy.
+- Steam web/community traffic should still be proxied; routing `steamwebhelper.exe` direct breaks cases such as Workshop pages.
+- Clash only sees the ProxiFyre-forwarded IP:port, so domain-based Clash rules are unreliable unless Clash sniffs HTTP/TLS/QUIC metadata.
+- A stale Claude MSIX persistent route used a broad process-name fallback and captured unrelated CLI `claude.exe` processes.
+
+Decision:
+- Add ProxiFyre destination direct rules that match process, protocol, destination port, and IPv4 CIDR before selecting a SOCKS5 route.
+- Keep Steam download/CDN bypass in external CIDR files under `backend/proxifyre/rules/` so observed ranges can be updated without code changes.
+- Scope Steam direct rules to `steam.exe` only. Do not direct-route `steamwebhelper.exe`.
+- Keep Steam community/workshop web traffic proxied and rely on Clash sniffer when domain recovery is needed downstream.
+- Remove the stale Claude persistent route from `config/proxyswitch.json`; the longer-term code fix is to stop using process-name fallback for MSIX/AUMID identity routes.
+
+Core implementation:
+- `ProxiFyre/netlib/src/proxy/socks_local_router.h`: destination direct rule table and TCP/UDP decision checks.
+- `ProxiFyre/socksify/Socksifier.*`, `socksify_unmanaged.*`: C++/CLI bridge for destination direct rules.
+- `ProxiFyre/ProxiFyre/Program.cs`: load `destinationRules`, expand `cidrSets`, and log active rules.
+- `src/ProxySwitch/Services/ProxiFyreBackend.cs`: preserve destination rules when rewriting `app-config.json` and provide default Steam rules.
+- `backend/proxifyre/rules/steam-valve-ipv4.txt`: Valve AS32590 IPv4 ranges.
+- `backend/proxifyre/rules/steam-observed-download-cdn-ipv4.txt`: locally observed Steam download CDN ranges.
+
+Operational notes:
+- ProxiFyre must be restarted after editing `app-config.json` or the external rule files.
+- A successful startup logs `Destination direct rules active: 4/4`.
+- Expected Steam download bypass logs include `TrafficDecision ... decision=DIRECT rule=steam-valve-direct` or `steam-download-cdn-direct`.
+- `steamwebhelper.exe` traffic should normally continue through the proxy path.
 
 ## Documentation Policy
 
